@@ -127,12 +127,17 @@ export function generateSchedule(
     const slotEnd = addMinutes(slotStart, granularity);
     const key = slotKey(slotStart);
 
-    const required =
-      config.nightShifts && config.nightShiftStart != null && config.nightShiftEnd != null
-        ? isNightSlot(slotStart, config.nightShiftStart, config.nightShiftEnd)
-          ? config.nightOnShift ?? config.stdOnShift
-          : config.stdOnShift
-        : config.stdOnShift;
+    const isNight =
+      config.nightShifts &&
+      config.nightShiftStart != null &&
+      config.nightShiftEnd != null &&
+      isNightSlot(slotStart, config.nightShiftStart, config.nightShiftEnd);
+
+    const required = isNight ? config.nightOnShift ?? config.stdOnShift : config.stdOnShift;
+    // Night hours are all-or-nothing: once someone is on a night shift, the
+    // normal max-shift-length cap doesn't apply — they cover the whole
+    // window rather than being capped and handed off mid-night.
+    const effectiveMaxSlots = isNight ? Infinity : maxSlotsPerShift;
 
     const statusByName = new Map(
       members.map((m) => [m.memberName, getStatus(availabilityByName.get(m.memberName)!, key)])
@@ -144,7 +149,7 @@ export function generateSchedule(
 
     // Continuers: currently open, workable this slot, under the shift cap.
     const continuers = [...states.values()].filter(
-      (s) => s.openStart !== null && workableNames.has(s.memberName) && s.slotsElapsed < maxSlotsPerShift
+      (s) => s.openStart !== null && workableNames.has(s.memberName) && s.slotsElapsed < effectiveMaxSlots
     );
 
     // Anyone open but not eligible to continue gets closed now.

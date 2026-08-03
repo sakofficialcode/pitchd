@@ -10,7 +10,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test:scheduler": "tsx --test server/scheduler.test.ts"
+    "test:scheduler": "tsx --test server/scheduler.test.ts server/scheduler.fixture.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.0.0",

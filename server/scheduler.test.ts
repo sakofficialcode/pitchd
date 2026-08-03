@@ -74,7 +74,7 @@ test('rest is still preferred when someone else can cover the slot', () => {
   assert.equal(result.understaffed.length, 0);
 });
 
-test('night/day boundary: headcount switches, open shift crossing boundary is not force-closed', () => {
+test('night/day boundary: headcount drops and night is one unbroken block past the 3h cap', () => {
   const config = baseConfig({
     shiftStart: '2026-01-01T20:00',
     shiftEnd: '2026-01-02T02:00',
@@ -96,19 +96,17 @@ test('night/day boundary: headcount switches, open shift crossing boundary is no
   const bShifts = result.assignments.filter((a) => a.memberName === 'B');
 
   // Both start together at 20:00. At the day->night boundary (22:00) headcount drops to 1
-  // and B (the shorter-running of the two) is trimmed there. A keeps going uninterrupted
-  // across the boundary until hitting the 3h cap at 23:00. By then B has already cleared
-  // its 30-min rest (done at 22:30), so B — being fully rested — is preferred over forcing
-  // A back in early, and covers the rest of the window.
+  // and B (the shorter-running of the two) is trimmed there. Night hours are all-or-nothing,
+  // so the normal 3h cap doesn't apply once A is in the night window — A covers the entire
+  // rest of the window uninterrupted, and B never resumes since the night only needs one
+  // person the whole time.
   assert.equal(aShifts.length, 1);
   assert.equal(aShifts[0].start, new Date('2026-01-01T20:00').toISOString());
-  assert.equal(aShifts[0].end, new Date('2026-01-01T23:00').toISOString());
+  assert.equal(aShifts[0].end, new Date('2026-01-02T02:00').toISOString());
 
-  assert.equal(bShifts.length, 2);
+  assert.equal(bShifts.length, 1);
   assert.equal(bShifts[0].start, new Date('2026-01-01T20:00').toISOString());
   assert.equal(bShifts[0].end, new Date('2026-01-01T22:00').toISOString());
-  assert.equal(bShifts[1].start, new Date('2026-01-01T23:00').toISOString());
-  assert.equal(bShifts[1].end, new Date('2026-01-02T02:00').toISOString());
 
   assert.equal(result.understaffed.length, 0);
 });

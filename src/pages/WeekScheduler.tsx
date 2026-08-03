@@ -17,10 +17,55 @@ type WeekSchedulerProps = {
   onAvailabilityChange?: (availability: AvailabilityMap) => void;
   onDateRangeChange?: (start: Date | null, end: Date | null) => void;
   readOnly?: boolean;
+  nightShifts?: boolean;
+  nightShiftStart?: number | null;
+  nightShiftEnd?: number | null;
 };
 
 function getStatus(availability: AvailabilityMap, key: string): AvailabilityStatus {
   return availability[key] ?? 'available';
+}
+
+function isNightHour(hour: number, nightStart: number, nightEnd: number): boolean {
+  return nightStart <= nightEnd ? hour >= nightStart && hour < nightEnd : hour >= nightStart || hour < nightEnd;
+}
+
+function dateStrOf(d: Date): string {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+// Night hours are all-or-nothing: painting any cell inside a night's window
+// snaps every slot in that same night (which may span into the next
+// calendar day) to the same status.
+function nightBlockKeys(
+  dateStr: string,
+  minutes: number,
+  nightStart: number,
+  nightEnd: number,
+  slotMinutes: number
+): string[] {
+  const wrapped = nightStart > nightEnd;
+  const [year, month, day] = dateStr.split('-').map(Number);
+
+  // Anchor on the calendar day the night started on — early-morning hours
+  // after midnight belong to the night that began the previous day.
+  const anchor = new Date(year, month - 1, day);
+  if (wrapped && minutes / 60 < nightEnd) {
+    anchor.setDate(anchor.getDate() - 1);
+  }
+
+  const startMinutes = nightStart * 60;
+  const endMinutes = wrapped ? nightEnd * 60 + 24 * 60 : nightEnd * 60;
+
+  const keys: string[] = [];
+  for (let m = startMinutes; m < endMinutes; m += slotMinutes) {
+    const dayOffset = Math.floor(m / (24 * 60));
+    const minuteOfDay = m % (24 * 60);
+    const d = new Date(anchor);
+    d.setDate(d.getDate() + dayOffset);
+    keys.push(`${dateStrOf(d)}-${minuteOfDay}`);
+  }
+  return keys;
 }
 
 const STATUS_LABEL: Record<AvailabilityStatus, string> = {
@@ -60,6 +105,9 @@ export default function WeekScheduler({
   onAvailabilityChange,
   onDateRangeChange,
   readOnly = false,
+  nightShifts = false,
+  nightShiftStart = null,
+  nightShiftEnd = null,
 }: WeekSchedulerProps) {
   const [availability, setAvailability] = useState<AvailabilityMap>(initialAvailability);
   const [isDragging, setIsDragging] = useState(false);
@@ -301,19 +349,30 @@ export default function WeekScheduler({
     }
   };
 
+  const paintCell = (dateStr: string, minutes: number) => {
+    if (nightShifts && nightShiftStart != null && nightShiftEnd != null && isNightHour(minutes / 60, nightShiftStart, nightShiftEnd)) {
+      const keys = nightBlockKeys(dateStr, minutes, nightShiftStart, nightShiftEnd, slotMinutes);
+      const updates: AvailabilityMap = {};
+      for (const k of keys) updates[k] = paintMode;
+      updateAvailability({ ...availability, ...updates });
+      return;
+    }
+
+    const key = getCellKey(dateStr, minutes);
+    updateAvailability({ ...availability, [key]: paintMode });
+  };
+
   const handleMouseDown = (dateStr: string, minutes: number) => {
     if (!isCellValid(dateStr, minutes) || readOnly) return;
 
     setIsDragging(true);
-    const key = getCellKey(dateStr, minutes);
-    updateAvailability({ ...availability, [key]: paintMode });
+    paintCell(dateStr, minutes);
   };
 
   const handleMouseEnter = (dateStr: string, minutes: number) => {
     if (!isDragging || !isCellValid(dateStr, minutes) || readOnly) return;
 
-    const key = getCellKey(dateStr, minutes);
-    updateAvailability({ ...availability, [key]: paintMode });
+    paintCell(dateStr, minutes);
   };
 
   const handleMouseUp = () => {
@@ -534,6 +593,9 @@ export default function WeekScheduler({
         <ul className="text-sm text-blue-800 space-y-1">
           <li>• Use arrow buttons to navigate between weeks</li>
           {!readOnly && <li>• Pick a paint mode above, then click and drag on cells to mark them</li>}
+          {!readOnly && nightShifts && (
+            <li>• Night hours are all-or-nothing: clicking any cell in the night window marks the whole night at once</li>
+          )}
           <li>• Gray cells are outside the specified time range</li>
           <li>• Green = available, Amber = not preferred, Red = unavailable</li>
           {!readOnly && <li>• Export to CSV downloads only valid time slots within your range</li>}

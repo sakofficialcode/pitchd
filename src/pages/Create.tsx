@@ -15,9 +15,9 @@ const timeGranularity = [
   { label: '1 hour', value: 60 },
 ];
 
-// Helper to convert 0-24 hour value to readable time string
+// Helper to convert an hour value (0-24, or 24-48 for the next day) to a readable time string
 function formatHour(hour: number): string {
-  const h = Math.floor(hour);
+  const h = Math.floor(hour) % 24;
   const period = h >= 12 ? 'PM' : 'AM';
   const displayHour = h === 0 ? 12 : h > 12 ? h - 12 : h;
   return `${displayHour}:00 ${period}`;
@@ -30,7 +30,7 @@ export default function Create() {
   const [numMembers, setNumMembers] = React.useState<number | undefined>(undefined);
   const [stdOnShift, setStdOnShift] = React.useState<number | undefined>(undefined);
   const [nightShifts, setNightShifts] = React.useState(false);
-  const [nightHours, setNightHours] = React.useState([22, 6]); // 10 PM to 6 AM
+  const [nightHours, setNightHours] = React.useState([22, 30]); // 10 PM to 6 AM (on a noon-to-noon slider domain)
   const [selectedGranularity, setSelectedGranularity] = React.useState<15 | 30 | 60>(30);
 
   return (
@@ -59,8 +59,8 @@ export default function Create() {
               timeGranularity: selectedGranularity,
               nightShifts,
               ...(nightShifts && {
-                nightShiftStart: nightHours[0],
-                nightShiftEnd: nightHours[1],
+                nightShiftStart: nightHours[0] % 24,
+                nightShiftEnd: nightHours[1] % 24,
                 nightOnShift: Number(formData.get('nightOnShift')),
               }),
               adminPassword: (formData.get('adminPassword') as string) || null,
@@ -237,8 +237,8 @@ export default function Create() {
                   <Slider.Root
                     value={nightHours}
                     onValueChange={setNightHours}
-                    min={0}
-                    max={24}
+                    min={12}
+                    max={36}
                     step={1}
                     className="relative flex items-center"
                   >

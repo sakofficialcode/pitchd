@@ -1,0 +1,79 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { generateSchedule, isNightSlot } from './scheduler.ts';
+import type { GroupConfig } from './types.ts';
+import { auburnTentingConfig, auburnTentingMembers } from './fixtures/auburn-tenting-availability.ts';
+
+// Regression test built from a real multi-day tenting/camp-out sign-up sheet (12 members,
+// half-hour granularity, names anonymized to M1-M12 — see fixtures/auburn-tenting-availability.ts).
+// Rather than hand-computing the exact expected schedule for 12 people over 2.5 days, this
+// checks the invariants generateSchedule must uphold against real, messy availability data.
+
+function slotKey(d: Date): string {
+  const dateStr =
+    d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  return `${dateStr}-${d.getHours() * 60 + d.getMinutes()}`;
+}
+
+test('real-world fixture: tenting sign-up schedule respects recorded availability and shift rules', () => {
+  const config: GroupConfig = {
+    uuid: 'auburn-tenting',
+    groupName: 'Auburn Tenting',
+    numMembers: auburnTentingMembers.length,
+    ...auburnTentingConfig,
+  };
+
+  const result = generateSchedule(config, auburnTentingMembers);
+  assert.ok(result.assignments.length > 0);
+
+  const availabilityByName = new Map(auburnTentingMembers.map((m) => [m.memberName, m.availability]));
+  const granularityMs = config.timeGranularity * 60_000;
+  const maxDayShiftMs = 3 * 60 * 60_000;
+
+  for (const a of result.assignments) {
+    const startD = new Date(a.start);
+    const endD = new Date(a.end);
+    const availability = availabilityByName.get(a.memberName)!;
+
+    let touchesNight = false;
+    for (let s = new Date(startD); s < endD; s = new Date(s.getTime() + granularityMs)) {
+      assert.notEqual(
+        availability[slotKey(s)],
+        'unavailable',
+        `${a.memberName} scheduled at ${s.toISOString()}, a slot they marked unavailable`
+      );
+      if (isNightSlot(s, config.nightShiftStart!, config.nightShiftEnd!)) touchesNight = true;
+    }
+
+    // Night hours are all-or-nothing (no 3h cap); day-only shifts must respect it.
+    if (!touchesNight) {
+      assert.ok(
+        endD.getTime() - startD.getTime() <= maxDayShiftMs,
+        `${a.memberName}'s day shift ${a.start} - ${a.end} exceeds the 3h cap`
+      );
+    }
+  }
+
+  // No member is double-booked.
+  const shiftsByMember = new Map<string, { start: Date; end: Date }[]>();
+  for (const a of result.assignments) {
+    const list = shiftsByMember.get(a.memberName) ?? [];
+    list.push({ start: new Date(a.start), end: new Date(a.end) });
+    shiftsByMember.set(a.memberName, list);
+  }
+  for (const [memberName, shifts] of shiftsByMember) {
+    shifts.sort((x, y) => x.start.getTime() - y.start.getTime());
+    for (let i = 1; i < shifts.length; i++) {
+      assert.ok(
+        shifts[i].start.getTime() >= shifts[i - 1].end.getTime(),
+        `${memberName} has overlapping shifts around ${shifts[i].start.toISOString()}`
+      );
+    }
+  }
+
+  // Understaffed ranges must reflect a genuine, correctly-sized deficit.
+  for (const u of result.understaffed) {
+    assert.ok(u.filled < u.required, `understaffed range ${u.start}-${u.end} has filled >= required`);
+    assert.ok(u.filled >= 0);
+  }
+});

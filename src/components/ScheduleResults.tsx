@@ -48,6 +48,13 @@ function dateKey(d: Date): string {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
 
+function formatHours(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  if (h === 0) return `${m}m`;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return '?';
@@ -207,6 +214,28 @@ export default function ScheduleResults({ result }: { result: ScheduleResult }) 
     return { days, segmentsByDay, understaffedByDay, windowStartMin, windowEndMin };
   }, [result.assignments, result.understaffed]);
 
+  const workload = useMemo(() => {
+    const byMember = new Map<string, { minutes: number; shiftCount: number }>();
+    for (const a of result.assignments) {
+      const minutes = (new Date(a.end).getTime() - new Date(a.start).getTime()) / 60_000;
+      const entry = byMember.get(a.memberName) ?? { minutes: 0, shiftCount: 0 };
+      entry.minutes += minutes;
+      entry.shiftCount += 1;
+      byMember.set(a.memberName, entry);
+    }
+    return [...byMember.entries()]
+      .map(([name, stats]) => ({ name, ...stats }))
+      .sort((a, b) => b.minutes - a.minutes);
+  }, [result.assignments]);
+
+  // Average is total/count regardless of how the distribution is shaped, so
+  // "target" needs no separate weighting logic beyond the sum below.
+  const targetMinutes = workload.length
+    ? workload.reduce((sum, w) => sum + w.minutes, 0) / workload.length
+    : 0;
+  const maxWorkload = workload[0];
+  const minWorkload = workload[workload.length - 1];
+
   const members = [...memberColor.entries()];
   const windowLength = Math.max(60, windowEndMin - windowStartMin);
   const containerHeight = (windowLength / 60) * HOUR_HEIGHT_PX;
@@ -222,6 +251,26 @@ export default function ScheduleResults({ result }: { result: ScheduleResult }) 
   return (
     <div className="mt-6 space-y-6">
       <h3 className="text-sm font-semibold text-gray-900">Generated {formatDateTime(result.generatedAt)}</h3>
+
+      {workload.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900 mb-2">Workload</h3>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-md border border-gray-200 bg-white px-4 py-3">
+              <p className="text-xs text-gray-500">Target per person</p>
+              <p className="text-lg font-semibold text-gray-900">{formatHours(targetMinutes)}</p>
+            </div>
+            <div className="rounded-md border border-gray-200 bg-white px-4 py-3">
+              <p className="text-xs text-gray-500">Most scheduled</p>
+              <p className="text-lg font-semibold text-gray-900">{formatHours(maxWorkload.minutes)}</p>
+            </div>
+            <div className="rounded-md border border-gray-200 bg-white px-4 py-3">
+              <p className="text-xs text-gray-500">Least scheduled</p>
+              <p className="text-lg font-semibold text-gray-900">{formatHours(minWorkload.minutes)}</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {days.length === 0 ? (
         <p className="text-sm text-gray-500">No shifts could be assigned yet.</p>

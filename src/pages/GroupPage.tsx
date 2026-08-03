@@ -172,6 +172,9 @@ export default function GroupPage() {
             initialEndDateTime={group.shiftEnd}
             onAvailabilityChange={setCurrentAvailability}
             readOnly={!unlocked}
+            nightShifts={group.nightShifts}
+            nightShiftStart={group.nightShiftStart}
+            nightShiftEnd={group.nightShiftEnd}
           />
         </div>
 
