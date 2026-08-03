@@ -1,0 +1,544 @@
+import { useState, useRef, useMemo, useEffect } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import 'gapi-script';
+import type { AvailabilityMap, AvailabilityStatus } from '../lib/types';
+
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+const GOOGLE_API_KEY = import.meta.env.VITE_GOOGLE_API_KEY;
+
+const DISCOVERY_DOCS = ['https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest'];
+const SCOPES = 'https://www.googleapis.com/auth/calendar.events.readonly';
+
+type WeekSchedulerProps = {
+  slotMinutes?: 15 | 30 | 60;
+  initialAvailability?: AvailabilityMap;
+  initialStartDateTime?: string | null;
+  initialEndDateTime?: string | null;
+  onAvailabilityChange?: (availability: AvailabilityMap) => void;
+  onDateRangeChange?: (start: Date | null, end: Date | null) => void;
+  readOnly?: boolean;
+};
+
+function getStatus(availability: AvailabilityMap, key: string): AvailabilityStatus {
+  return availability[key] ?? 'available';
+}
+
+const STATUS_LABEL: Record<AvailabilityStatus, string> = {
+  available: 'Available',
+  not_preferred: 'Not Preferred',
+  unavailable: 'Unavailable',
+};
+
+const STATUS_CELL_CLASS: Record<AvailabilityStatus, string> = {
+  available: 'bg-green-500',
+  not_preferred: 'bg-amber-400',
+  unavailable: 'bg-red-500',
+};
+
+const STATUS_CELL_HOVER_CLASS: Record<AvailabilityStatus, string> = {
+  available: 'bg-green-500 hover:bg-green-600 cursor-pointer',
+  not_preferred: 'bg-amber-400 hover:bg-amber-500 cursor-pointer',
+  unavailable: 'bg-red-500 hover:bg-red-600 cursor-pointer',
+};
+
+interface SelectedDate {
+  dateStr: string;
+  hour: number;
+}
+
+interface DayItem {
+  name: string;
+  dateStr: string;
+  date: Date;
+}
+
+export default function WeekScheduler({
+  slotMinutes = 60,
+  initialAvailability = {},
+  initialStartDateTime = null,
+  initialEndDateTime = null,
+  onAvailabilityChange,
+  onDateRangeChange,
+  readOnly = false,
+}: WeekSchedulerProps) {
+  const [availability, setAvailability] = useState<AvailabilityMap>(initialAvailability);
+  const [isDragging, setIsDragging] = useState(false);
+  const [paintMode, setPaintMode] = useState<AvailabilityStatus>('unavailable');
+  const [currentWeekOffset, setCurrentWeekOffset] = useState(0);
+  const dragStartRef = useRef<SelectedDate | null>(null);
+  const [authorized, setAuthorized] = useState(false);
+  const tokenClientRef = useRef<ReturnType<typeof window.google.accounts.oauth2.initTokenClient> | null>(null);
+  const [gisLoaded, setGisLoaded] = useState(false);
+
+  // Default to a 2-week range starting today if not provided
+  const getDefaultStart = () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return today.toISOString().slice(0, 16);
+  };
+
+  const getDefaultEnd = () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const twoWeeksLater = new Date(today);
+    twoWeeksLater.setDate(twoWeeksLater.getDate() + 13);
+    twoWeeksLater.setHours(23, 59, 59, 999);
+    return twoWeeksLater.toISOString().slice(0, 16);
+  };
+
+  const [startDateTime, setStartDateTime] = useState(initialStartDateTime || getDefaultStart());
+  const [endDateTime, setEndDateTime] = useState(initialEndDateTime || getDefaultEnd());
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      if (window.google?.accounts?.oauth2) {
+        setGisLoaded(true);
+        window.clearInterval(interval);
+
+        tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
+          client_id: GOOGLE_CLIENT_ID,
+          scope: SCOPES,
+          callback: (tokenResponse) => {
+            if (!tokenResponse.access_token) return;
+            window.gapi.client.setToken({ access_token: tokenResponse.access_token });
+            setAuthorized(true);
+            fetchEvents();
+          },
+        });
+      }
+    }, 50);
+
+    return () => window.clearInterval(interval);
+  }, []);
+
+  // --- Initialize gapi ---
+  useEffect(() => {
+    if (!gisLoaded) return;
+    window.gapi.load('client', async () => {
+      await window.gapi.client.init({
+        apiKey: GOOGLE_API_KEY,
+        discoveryDocs: DISCOVERY_DOCS,
+      });
+    });
+  }, [gisLoaded]);
+
+  const signIn = () => tokenClientRef.current?.requestAccessToken();
+
+  const fetchEvents = async () => {
+    const response = await window.gapi.client.calendar.events.list({
+      calendarId: 'primary',
+      timeMin: new Date(initialStartDateTime!).toISOString(),
+      timeMax: new Date(initialEndDateTime!).toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime',
+    });
+
+    const fetchedEvents = response.result.items || [];
+
+    // Map events to scheduler slots
+    const googleAvailability: AvailabilityMap = {};
+
+    fetchedEvents.forEach((event) => {
+      const eventStart = new Date(event.start!.dateTime!);
+      const eventEnd = new Date(event.end!.dateTime!);
+
+      // Iterate through each day the event touches
+      const dayCursor = new Date(eventStart);
+      dayCursor.setHours(0, 0, 0, 0);
+
+      while (dayCursor <= eventEnd) {
+        const dateStr =
+          dayCursor.getFullYear() +
+          '-' +
+          String(dayCursor.getMonth() + 1).padStart(2, '0') +
+          '-' +
+          String(dayCursor.getDate()).padStart(2, '0');
+
+        // Iterate through every slot in that day
+        for (let minutes = 0; minutes < 1440; minutes += slotMinutes) {
+          const slotStart = new Date(
+            dayCursor.getFullYear(),
+            dayCursor.getMonth(),
+            dayCursor.getDate(),
+            Math.floor(minutes / 60),
+            minutes % 60,
+            0,
+            0
+          );
+
+          const slotEnd = new Date(slotStart);
+          slotEnd.setMinutes(slotEnd.getMinutes() + slotMinutes);
+
+          const overlaps = slotStart < eventEnd && slotEnd > eventStart;
+
+          if (overlaps) {
+            googleAvailability[`${dateStr}-${minutes}`] = 'unavailable';
+          }
+        }
+
+        dayCursor.setDate(dayCursor.getDate() + 1);
+      }
+    });
+
+    setAvailability((prev) => ({ ...prev, ...googleAvailability }));
+  };
+
+  // Update when props change
+  useEffect(() => {
+    if (initialAvailability && Object.keys(initialAvailability).length > 0) {
+      setAvailability(initialAvailability);
+    }
+  }, [initialAvailability]);
+
+  useEffect(() => {
+    if (initialStartDateTime) {
+      setStartDateTime(initialStartDateTime);
+    }
+  }, [initialStartDateTime]);
+
+  useEffect(() => {
+    if (initialEndDateTime) {
+      setEndDateTime(initialEndDateTime);
+    }
+  }, [initialEndDateTime]);
+
+  useEffect(() => {
+    onDateRangeChange?.(new Date(startDateTime), new Date(endDateTime));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startDateTime, endDateTime]);
+
+  const slotsPerHour = 60 / slotMinutes;
+  const totalSlots = 24 * slotsPerHour;
+
+  const rowHeight = Math.max(20, 600 / totalSlots);
+
+  const timeSlots = useMemo(() => {
+    return Array.from({ length: (24 * 60) / slotMinutes }, (_, i) => i * slotMinutes);
+  }, [slotMinutes]);
+
+  const { totalWeeks, daysInCurrentWeek, weekStartDate } = useMemo(() => {
+    const start = new Date(startDateTime);
+    const end = new Date(endDateTime);
+
+    const diffMs = end.getTime() - start.getTime();
+    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24)) + 1;
+    const weeks = Math.ceil(diffDays / 7);
+
+    const weekStart = new Date(start);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay() + currentWeekOffset * 7);
+
+    const daysInWeek = Math.min(7, diffDays - currentWeekOffset * 7);
+
+    return {
+      totalDays: diffDays,
+      totalWeeks: weeks,
+      daysInCurrentWeek: Math.max(0, daysInWeek),
+      weekStartDate: weekStart,
+    };
+  }, [startDateTime, endDateTime, currentWeekOffset]);
+
+  const daysToDisplay = useMemo(() => {
+    const days = [];
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+    for (let i = 0; i < 7; i++) {
+      // always 7 days
+      const date = new Date(weekStartDate);
+      date.setDate(date.getDate() + i);
+
+      days.push({
+        name: dayNames[date.getDay()],
+        date,
+        dateStr:
+          date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0'),
+        isInRange: date >= new Date(startDateTime) && date <= new Date(endDateTime), // mark if inside range
+      });
+    }
+
+    return days;
+  }, [weekStartDate, startDateTime, endDateTime]);
+
+  const isCellValid = (dateStr: string, minutes: number) => {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const cellStart = new Date(year, month - 1, day, 0, minutes, 0, 0); // local time
+    const cellEnd = new Date(cellStart);
+    cellEnd.setMinutes(cellEnd.getMinutes() + slotMinutes);
+    cellEnd.setMilliseconds(cellEnd.getMilliseconds() - 1);
+
+    const start = new Date(startDateTime);
+    const end = new Date(endDateTime);
+
+    return cellStart >= start && cellEnd <= end;
+  };
+
+  const getCellKey = (dateStr: string, minutes: number) => `${dateStr}-${minutes}`;
+
+  const formatTime = (minutes: number) => {
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    const period = h >= 12 ? 'PM' : 'AM';
+    const displayHour = h % 12 || 12;
+
+    return `${displayHour}:${m.toString().padStart(2, '0')} ${period}`;
+  };
+
+  const groupedSlots = useMemo(() => {
+    const map = new Map<number, number[]>();
+
+    timeSlots.forEach((minutes) => {
+      const hour = Math.floor(minutes / 60);
+      if (!map.has(hour)) map.set(hour, []);
+      map.get(hour)!.push(minutes);
+    });
+
+    return map;
+  }, [timeSlots]);
+
+  const updateAvailability = (newAvailability: AvailabilityMap) => {
+    setAvailability(newAvailability);
+    if (onAvailabilityChange) {
+      onAvailabilityChange(newAvailability);
+    }
+  };
+
+  const handleMouseDown = (dateStr: string, minutes: number) => {
+    if (!isCellValid(dateStr, minutes) || readOnly) return;
+
+    setIsDragging(true);
+    const key = getCellKey(dateStr, minutes);
+    updateAvailability({ ...availability, [key]: paintMode });
+  };
+
+  const handleMouseEnter = (dateStr: string, minutes: number) => {
+    if (!isDragging || !isCellValid(dateStr, minutes) || readOnly) return;
+
+    const key = getCellKey(dateStr, minutes);
+    updateAvailability({ ...availability, [key]: paintMode });
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+    dragStartRef.current = null;
+  };
+
+  const clearAll = () => {
+    updateAvailability({});
+  };
+
+  const getStatusCounts = () => {
+    let notPreferred = 0;
+    let unavailable = 0;
+    for (const status of Object.values(availability)) {
+      if (status === 'not_preferred') notPreferred += 1;
+      else if (status === 'unavailable') unavailable += 1;
+    }
+    return { notPreferred, unavailable };
+  };
+
+  const goToPreviousWeek = () => {
+    if (currentWeekOffset > 0) {
+      setCurrentWeekOffset((prev) => prev - 1);
+    }
+  };
+
+  const goToNextWeek = () => {
+    if (currentWeekOffset < totalWeeks - 1) {
+      setCurrentWeekOffset((prev) => prev + 1);
+    }
+  };
+
+  const exportToCSV = () => {
+    const start = new Date(startDateTime);
+    const end = new Date(endDateTime);
+    const allDays: DayItem[] = [];
+
+    // Generate all days in range
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const dateStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      allDays.push({
+        name: dayNames[d.getDay()],
+        dateStr: dateStr,
+        date: new Date(d),
+      });
+    }
+
+    // Create CSV header
+    let csv = 'Time,' + allDays.map((d) => `${d.name} (${d.dateStr})`).join(',') + '\n';
+
+    // Create CSV rows
+    timeSlots.forEach((minutes) => {
+      const row = [formatTime(minutes)];
+
+      allDays.forEach((day) => {
+        if (isCellValid(day.dateStr, minutes)) {
+          const key = getCellKey(day.dateStr, minutes);
+          row.push(STATUS_LABEL[getStatus(availability, key)]);
+        } else {
+          row.push('');
+        }
+      });
+
+      csv += row.join(',') + '\n';
+    });
+
+    // Create and download file
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'scheduler-availability.csv';
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="p-4" onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
+      <div className="mb-4 flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={goToPreviousWeek}
+            disabled={currentWeekOffset === 0}
+            className="p-2 rounded-md bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <span className="text-sm font-medium text-gray-700">
+            Week {currentWeekOffset + 1} of {totalWeeks}
+          </span>
+          <button
+            onClick={goToNextWeek}
+            disabled={currentWeekOffset >= totalWeeks - 1}
+            className="p-2 rounded-md bg-white border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <ChevronRight className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="flex gap-3 items-center flex-wrap">
+          <div className="text-sm text-gray-700">
+            <span className="font-semibold">{getStatusCounts().notPreferred}</span> not preferred ·{' '}
+            <span className="font-semibold">{getStatusCounts().unavailable}</span> unavailable
+          </div>
+          {!readOnly && (
+            <>
+              {!authorized ? (
+                <button
+                  onClick={signIn}
+                  className="h-10 px-4 rounded-md border border-gray-300 text-gray-900 font-medium hover:bg-gray-50 transition-colors text-sm"
+                >
+                  Import from Google
+                </button>
+              ) : (
+                <button
+                  onClick={fetchEvents}
+                  className="h-10 px-4 rounded-md border border-gray-300 text-gray-900 font-medium hover:bg-gray-50 transition-colors text-sm"
+                >
+                  Fetch Events
+                </button>
+              )}
+              <button
+                onClick={exportToCSV}
+                className="h-10 px-4 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 transition-colors text-sm"
+              >
+                Export to CSV
+              </button>
+              <button
+                onClick={clearAll}
+                className="h-10 px-4 rounded-md border border-red-200 bg-red-50 text-red-700 font-medium hover:bg-red-100 transition-colors text-sm"
+              >
+                Clear All
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {!readOnly && (
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-sm font-medium text-gray-700 mr-1">Paint mode:</span>
+          {(['available', 'not_preferred', 'unavailable'] as AvailabilityStatus[]).map((status) => (
+            <button
+              key={status}
+              onClick={() => setPaintMode(status)}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium border transition-colors ${
+                paintMode === status
+                  ? `${STATUS_CELL_CLASS[status]} text-white border-transparent`
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              {STATUS_LABEL[status]}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {daysInCurrentWeek > 0 ? (
+        <div className="rounded-md border border-gray-200 overflow-auto">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr>
+                <th className="sticky left-0 z-10 bg-gray-50 border border-gray-200 p-3 text-sm font-semibold text-gray-700"></th>
+                {daysToDisplay.map((day) => (
+                  <th key={day.dateStr} className="bg-gray-50 border border-gray-200 p-3 text-sm font-semibold text-gray-700 min-w-24">
+                    <div>{day.name}</div>
+                    <div className="text-xs font-normal text-gray-500">{day.dateStr}</div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from(groupedSlots.entries()).map(([hour, slots]) =>
+                slots.map((minutes, idx) => (
+                  <tr key={`${hour}-${minutes}`}>
+                    {idx === 0 && (
+                      <td
+                        rowSpan={slots.length}
+                        className="sticky left-0 z-10 bg-gray-50 border border-gray-200 px-2 text-xs text-gray-600 text-right font-medium"
+                        style={{ height: `${rowHeight * slots.length}px` }}
+                      >
+                        {formatTime(hour * 60)}
+                      </td>
+                    )}
+
+                    {daysToDisplay.map((day) => {
+                      const key = getCellKey(day.dateStr, minutes);
+                      const status = getStatus(availability, key);
+                      const isValid = day.isInRange && isCellValid(day.dateStr, minutes);
+
+                      return (
+                        <td
+                          key={key}
+                          style={{ height: `${rowHeight}px` }}
+                          title={STATUS_LABEL[status]}
+                          className={`border border-gray-200 h-10 transition-colors select-none ${
+                            !isValid ? 'bg-gray-100 cursor-not-allowed' : readOnly ? STATUS_CELL_CLASS[status] : STATUS_CELL_HOVER_CLASS[status]
+                          }`}
+                          onMouseDown={() => handleMouseDown(day.dateStr, minutes)}
+                          onMouseEnter={() => handleMouseEnter(day.dateStr, minutes)}
+                        />
+                      );
+                    })}
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="rounded-md border border-gray-200 p-8 text-center text-gray-500">No days to display in this week range.</div>
+      )}
+
+      <div className="mt-4 p-4 bg-blue-50 rounded-md border border-blue-200">
+        <h3 className="font-semibold text-blue-900 mb-2">Instructions:</h3>
+        <ul className="text-sm text-blue-800 space-y-1">
+          <li>• Use arrow buttons to navigate between weeks</li>
+          {!readOnly && <li>• Pick a paint mode above, then click and drag on cells to mark them</li>}
+          <li>• Gray cells are outside the specified time range</li>
+          <li>• Green = available, Amber = not preferred, Red = unavailable</li>
+          {!readOnly && <li>• Export to CSV downloads only valid time slots within your range</li>}
+        </ul>
+      </div>
+    </div>
+  );
+}
