@@ -120,9 +120,14 @@ export default function GroupPage() {
         <div className="ui-card">
           <div className="flex items-start justify-between">
             <h1 className="text-2xl font-bold text-gray-900">{group.groupName}</h1>
-            <Link to={`/${uuid}/admin`} className="text-sm text-blue-600 hover:underline">
-              Admin
-            </Link>
+            <div className="flex items-center gap-4">
+              <Link to={`/${uuid}/schedule`} className="text-sm text-blue-600 hover:underline">
+                Schedule
+              </Link>
+              <Link to={`/${uuid}/admin`} className="text-sm text-blue-600 hover:underline">
+                Admin
+              </Link>
+            </div>
           </div>
           <p className="text-sm text-gray-600 mt-1">
             {group.numMembers} members &middot; {group.stdOnShift} per shift

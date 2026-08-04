@@ -52,3 +52,19 @@ export interface ScheduleResult {
   assignments: ShiftAssignment[];
   understaffed: UnderstaffedRange[];
 }
+
+export type SwapStatus = 'pending' | 'accepted' | 'declined';
+
+export interface SwapRequest {
+  id: number;
+  fromMember: string;
+  toMember: string;
+  fromStart: string;
+  fromEnd: string;
+  toStart: string | null;
+  toEnd: string | null;
+  message: string | null;
+  status: SwapStatus;
+  createdAt: string;
+  respondedAt: string | null;
+}

@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
+import ScheduleResults from '../components/ScheduleResults';
 import { generateSchedule, getGroup, viewSchedule } from '../lib/api';
 import type { GroupConfig, ScheduleResult } from '../lib/types';
 
@@ -14,7 +15,6 @@ function formatUpdatedAt(iso: string): string {
 
 export default function AdminPage() {
   const { uuid = '' } = useParams<{ uuid: string }>();
-  const navigate = useNavigate();
 
   const [group, setGroup] = React.useState<GroupConfig | null>(null);
   const [groupError, setGroupError] = React.useState<string | null>(null);
@@ -22,6 +22,7 @@ export default function AdminPage() {
   const [password, setPassword] = React.useState('');
   const [loading, setLoading] = React.useState(false);
   const [scheduleError, setScheduleError] = React.useState<string | null>(null);
+  const [result, setResult] = React.useState<ScheduleResult | null>(null);
 
   React.useEffect(() => {
     getGroup(uuid)
@@ -33,8 +34,7 @@ export default function AdminPage() {
     setLoading(true);
     setScheduleError(null);
     try {
-      const scheduleResult = await action(uuid, group?.hasAdminPassword ? password : null);
-      navigate(`/${uuid}/schedule`, { state: { result: scheduleResult } });
+      setResult(await action(uuid, group?.hasAdminPassword ? password : null));
     } catch (err) {
       setScheduleError(err instanceof Error ? err.message : 'Something went wrong');
     } finally {
@@ -119,7 +119,21 @@ export default function AdminPage() {
               <p className="text-sm text-red-600">{scheduleError}</p>
             </div>
           )}
+
+          <p className="mt-4 text-sm text-gray-600">
+            Members can view the schedule and suggest swaps by logging in on the{' '}
+            <Link to={`/${uuid}/schedule`} className="text-blue-600 hover:underline">
+              schedule page
+            </Link>
+            .
+          </p>
         </div>
+
+        {result && (
+          <div className="ui-card">
+            <ScheduleResults result={result} />
+          </div>
+        )}
       </div>
     </div>
   );

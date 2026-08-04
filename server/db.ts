@@ -10,6 +10,8 @@ import type {
   GroupConfig,
   MemberAvailability,
   ScheduleResult,
+  SwapRequest,
+  SwapStatus,
 } from './types.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -52,6 +54,21 @@ db.exec(`
     group_id     TEXT PRIMARY KEY REFERENCES groups(id) ON DELETE CASCADE,
     result_json  TEXT NOT NULL,
     generated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS swap_requests (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id      TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    from_member   TEXT NOT NULL,
+    to_member     TEXT NOT NULL,
+    from_start    TEXT NOT NULL,
+    from_end      TEXT NOT NULL,
+    to_start      TEXT,
+    to_end        TEXT,
+    message       TEXT,
+    status        TEXT NOT NULL DEFAULT 'pending',
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    responded_at  TEXT
   );
 `);
 
@@ -237,4 +254,94 @@ export function getSchedule(groupId: string): ScheduleResult | undefined {
     | { result_json: string }
     | undefined;
   return row ? (JSON.parse(row.result_json) as ScheduleResult) : undefined;
+}
+
+export function verifyMemberPassword(groupId: string, memberName: string, password: string): boolean {
+  const member = getMember(groupId, memberName);
+  return Boolean(member && verifyPassword(password, member.password_hash));
+}
+
+export function memberExists(groupId: string, memberName: string): boolean {
+  return Boolean(getMember(groupId, memberName));
+}
+
+interface SwapRequestRow {
+  id: number;
+  from_member: string;
+  to_member: string;
+  from_start: string;
+  from_end: string;
+  to_start: string | null;
+  to_end: string | null;
+  message: string | null;
+  status: SwapStatus;
+  created_at: string;
+  responded_at: string | null;
+}
+
+function rowToSwapRequest(row: SwapRequestRow): SwapRequest {
+  return {
+    id: row.id,
+    fromMember: row.from_member,
+    toMember: row.to_member,
+    fromStart: row.from_start,
+    fromEnd: row.from_end,
+    toStart: row.to_start,
+    toEnd: row.to_end,
+    message: row.message,
+    status: row.status,
+    createdAt: row.created_at,
+    respondedAt: row.responded_at,
+  };
+}
+
+export function createSwapRequest(
+  groupId: string,
+  input: {
+    fromMember: string;
+    toMember: string;
+    fromStart: string;
+    fromEnd: string;
+    toStart: string | null;
+    toEnd: string | null;
+    message: string | null;
+  }
+): SwapRequest {
+  const info = db
+    .prepare(
+      `INSERT INTO swap_requests (group_id, from_member, to_member, from_start, from_end, to_start, to_end, message)
+       VALUES (@groupId, @fromMember, @toMember, @fromStart, @fromEnd, @toStart, @toEnd, @message)`
+    )
+    .run({ groupId, ...input });
+
+  return getSwapRequest(groupId, info.lastInsertRowid as number)!;
+}
+
+export function getSwapRequest(groupId: string, id: number): SwapRequest | undefined {
+  const row = db
+    .prepare('SELECT * FROM swap_requests WHERE id = ? AND group_id = ?')
+    .get(id, groupId) as SwapRequestRow | undefined;
+  return row ? rowToSwapRequest(row) : undefined;
+}
+
+export function getSwapRequestsForMember(
+  groupId: string,
+  memberName: string
+): { incoming: SwapRequest[]; outgoing: SwapRequest[] } {
+  const rows = db
+    .prepare(
+      `SELECT * FROM swap_requests WHERE group_id = ? AND (from_member = ? OR to_member = ?)
+       ORDER BY created_at DESC`
+    )
+    .all(groupId, memberName, memberName) as SwapRequestRow[];
+
+  const incoming = rows.filter((r) => r.to_member === memberName).map(rowToSwapRequest);
+  const outgoing = rows.filter((r) => r.from_member === memberName).map(rowToSwapRequest);
+  return { incoming, outgoing };
+}
+
+export function setSwapRequestStatus(groupId: string, id: number, status: SwapStatus): void {
+  db.prepare(
+    `UPDATE swap_requests SET status = @status, responded_at = @respondedAt WHERE id = @id AND group_id = @groupId`
+  ).run({ id, groupId, status, respondedAt: new Date().toISOString() });
 }

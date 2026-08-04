@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import type { ScheduleResult, UnderstaffedRange } from '../lib/types';
+import { useMemo, useRef, useState } from 'react';
+import type { ScheduleResult, SwapRequest, UnderstaffedRange } from '../lib/types';
 import { getMemberColor, UNDERSTAFFED_COLOR } from '../lib/colors';
 
 const HOUR_HEIGHT_PX = 48;
@@ -47,11 +47,29 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+// Absolute time for the start of the slot `minuteOfDay` minutes into
+// `dayDate` (a local midnight). Using setMinutes (rather than raw
+// millisecond math) lets JS handle any hour/day rollover for us, the same
+// way WeekScheduler's own day-arithmetic does.
+function cellTime(dayDate: Date, minuteOfDay: number): string {
+  const d = new Date(dayDate);
+  d.setMinutes(minuteOfDay);
+  return d.toISOString();
+}
+
+function addMinutesIso(iso: string, minutes: number): string {
+  const d = new Date(iso);
+  d.setMinutes(d.getMinutes() + minutes);
+  return d.toISOString();
+}
+
 interface DaySegment {
   key: string;
   startMin: number;
   endMin: number;
-  label: string;
+  memberName: string;
+  assignmentStart: string;
+  assignmentEnd: string;
 }
 
 interface LaidOutSegment extends DaySegment {
@@ -127,8 +145,72 @@ function splitByDay(start: string, end: string): Map<string, { startMin: number;
   return result;
 }
 
-export default function ScheduleResults({ result }: { result: ScheduleResult }) {
+type SelectionSlot = 'from' | 'to';
+
+interface RangeSelection {
+  slot: SelectionSlot;
+  memberName: string;
+  start: string;
+  end: string;
+}
+
+// Anchor cell for an in-progress drag, tracked in a ref so the per-cell
+// mouseenter handlers (attached fresh every render) always see the live
+// value without needing to resubscribe anything.
+interface DragInfo {
+  slot: SelectionSlot;
+  memberName: string;
+  assignmentStart: string;
+  assignmentEnd: string;
+  anchor: string;
+  touchedOtherCell: boolean;
+}
+
+export interface SwapProposal {
+  toMember: string;
+  fromStart: string;
+  fromEnd: string;
+  toStart: string | null;
+  toEnd: string | null;
+  message: string | null;
+}
+
+export interface InteractiveConfig {
+  viewerName: string;
+  otherMembers: string[];
+  snapMinutes: number;
+  onSubmit: (proposal: SwapProposal) => Promise<void>;
+}
+
+interface ProposalState {
+  toMember: string;
+  includeReciprocal: boolean;
+  message: string;
+  submitting: boolean;
+  error: string | null;
+}
+
+const EMPTY_PROPOSAL: ProposalState = {
+  toMember: '',
+  includeReciprocal: false,
+  message: '',
+  submitting: false,
+  error: null,
+};
+
+interface Props {
+  result: ScheduleResult;
+  interactive?: InteractiveConfig;
+  previewRequest?: SwapRequest | null;
+}
+
+export default function ScheduleResults({ result, interactive, previewRequest }: Props) {
   const [weekOffset, setWeekOffset] = useState(0);
+  const [selections, setSelections] = useState<Partial<Record<SelectionSlot, RangeSelection>>>({});
+  const [proposal, setProposal] = useState<ProposalState>(EMPTY_PROPOSAL);
+
+  const dragRef = useRef<DragInfo | null>(null);
+  const snapMinutes = interactive?.snapMinutes ?? 15;
 
   const memberColor = useMemo(() => {
     const names = [...new Set(result.assignments.map((a) => a.memberName))].sort((a, b) => a.localeCompare(b));
@@ -179,7 +261,9 @@ export default function ScheduleResults({ result }: { result: ScheduleResult }) 
           key: `${a.memberName}-${a.start}`,
           startMin,
           endMin,
-          label: a.memberName,
+          memberName: a.memberName,
+          assignmentStart: a.start,
+          assignmentEnd: a.end,
         });
         rawByDay.set(key, list);
       }
@@ -233,8 +317,173 @@ export default function ScheduleResults({ result }: { result: ScheduleResult }) 
   const totalWeeks = Math.max(1, Math.ceil(days.length / 7));
   const visibleDays = days.slice(weekOffset * 7, weekOffset * 7 + 7);
 
+  const pctTop = (min: number) => ((min - windowStartMin) / windowLength) * 100;
+  const pctHeight = (a: number, b: number) => ((b - a) / windowLength) * 100;
+
+  // Finds which column slot (from the same greedy packing used for the real
+  // shift bars) a given member/day/time-range sits in, so overlays drawn on
+  // top of a bar match its footprint exactly even when other members' shifts
+  // are packed side-by-side in the same cluster — instead of always
+  // spanning the day column's full width.
+  const findColumn = (dayKey: string, memberName: string, startMin: number, endMin: number) => {
+    const owner = (segmentsByDay.get(dayKey) ?? []).find(
+      (s) => s.memberName === memberName && s.startMin <= startMin && s.endMin >= endMin
+    );
+    return { col: owner?.col ?? 0, colCount: owner?.colCount ?? 1 };
+  };
+
+  // Overlay boxes for the swap being proposed right now (drawn on top of the
+  // real shift bars, never mutating them). Recomputed from `selections` via
+  // the same day-splitting used for assignments, so overnight selections
+  // render correctly across the two day-columns they touch.
+  const overlaysByDay = useMemo(() => {
+    const map = new Map<
+      string,
+      Array<{ slot: SelectionSlot; startMin: number; endMin: number; isFirst: boolean; isLast: boolean; col: number; colCount: number }>
+    >();
+    (['from', 'to'] as const).forEach((slot) => {
+      const sel = selections[slot];
+      if (!sel) return;
+      const segs = [...splitByDay(sel.start, sel.end)];
+      segs.forEach(([dayKey, range], idx) => {
+        const { col, colCount } = findColumn(dayKey, sel.memberName, range.startMin, range.endMin);
+        const list = map.get(dayKey) ?? [];
+        list.push({ slot, ...range, isFirst: idx === 0, isLast: idx === segs.length - 1, col, colCount });
+        map.set(dayKey, list);
+      });
+    });
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selections, segmentsByDay]);
+
+  // Ghost outline for an incoming request being hovered in the requests
+  // list — purely visual, doesn't touch segmentsByDay/layout at all beyond
+  // reusing the same column lookup so it matches the real bar's footprint.
+  const previewByDay = useMemo(() => {
+    const map = new Map<
+      string,
+      Array<{ startMin: number; endMin: number; label: string; color: string; col: number; colCount: number }>
+    >();
+    if (!previewRequest) return map;
+    const addRange = (memberName: string, start: string, end: string, label: string, color: string) => {
+      for (const [dayKey, range] of splitByDay(start, end)) {
+        const { col, colCount } = findColumn(dayKey, memberName, range.startMin, range.endMin);
+        const list = map.get(dayKey) ?? [];
+        list.push({ ...range, label, color, col, colCount });
+        map.set(dayKey, list);
+      }
+    };
+    const toColor = memberColor.get(previewRequest.toMember) ?? getMemberColor(0);
+    addRange(previewRequest.fromMember, previewRequest.fromStart, previewRequest.fromEnd, `→ ${previewRequest.toMember}`, toColor);
+    if (previewRequest.toStart && previewRequest.toEnd) {
+      const fromColor = memberColor.get(previewRequest.fromMember) ?? getMemberColor(0);
+      addRange(previewRequest.toMember, previewRequest.toStart, previewRequest.toEnd, `→ ${previewRequest.fromMember}`, fromColor);
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewRequest, memberColor, segmentsByDay]);
+
+  // Drag-select over a discrete grid of real per-slot cells (mirrors
+  // WeekScheduler's availability grid) rather than inferring a time from raw
+  // pixel coordinates — every interactive unit is a real element the pointer
+  // is actually over, so there's nothing to drift out of sync.
+  const beginCellDrag = (
+    slot: SelectionSlot,
+    memberName: string,
+    assignmentStart: string,
+    assignmentEnd: string,
+    anchor: string
+  ) => {
+    dragRef.current = { slot, memberName, assignmentStart, assignmentEnd, anchor, touchedOtherCell: false };
+    setSelections((prev) => ({
+      ...prev,
+      [slot]: { slot, memberName, start: anchor, end: addMinutesIso(anchor, snapMinutes) },
+    }));
+  };
+
+  const extendCellDrag = (cellStart: string) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    if (cellStart !== drag.anchor) drag.touchedOtherCell = true;
+    const lo = cellStart < drag.anchor ? cellStart : drag.anchor;
+    const hiStart = cellStart < drag.anchor ? drag.anchor : cellStart;
+    setSelections((prev) => ({
+      ...prev,
+      [drag.slot]: { slot: drag.slot, memberName: drag.memberName, start: lo, end: addMinutesIso(hiStart, snapMinutes) },
+    }));
+  };
+
+  // A plain click (no drag to a different cell) proposes the whole shift;
+  // dragging is only needed to narrow it.
+  const finishDrag = () => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    dragRef.current = null;
+
+    if (!drag.touchedOtherCell) {
+      setSelections((prev) => ({
+        ...prev,
+        [drag.slot]: { slot: drag.slot, memberName: drag.memberName, start: drag.assignmentStart, end: drag.assignmentEnd },
+      }));
+    }
+  };
+
+  const beginEdgeDrag = (slot: SelectionSlot, edge: 'start' | 'end') => {
+    const sel = selections[slot];
+    if (!sel) return;
+    const seg = findAssignmentFor(sel.memberName, sel.start);
+    dragRef.current = {
+      slot,
+      memberName: sel.memberName,
+      assignmentStart: seg?.assignmentStart ?? sel.start,
+      assignmentEnd: seg?.assignmentEnd ?? sel.end,
+      anchor: edge === 'start' ? addMinutesIso(sel.end, -snapMinutes) : sel.start,
+      touchedOtherCell: true, // resizing an existing selection should never "snap to full shift" on release
+    };
+  };
+
+  // Looks up the full (un-clipped) assignment bounds a given selection
+  // belongs to, for the click-expands-to-whole-shift behavior on release.
+  const findAssignmentFor = (memberName: string, atIso: string): { assignmentStart: string; assignmentEnd: string } | null => {
+    const match = result.assignments.find(
+      (a) => a.memberName === memberName && new Date(a.start) <= new Date(atIso) && new Date(a.end) >= new Date(atIso)
+    );
+    return match ? { assignmentStart: match.start, assignmentEnd: match.end } : null;
+  };
+
+  const resetProposal = () => {
+    setSelections({});
+    setProposal(EMPTY_PROPOSAL);
+  };
+
+  const canSubmit = Boolean(selections.from && proposal.toMember && (!proposal.includeReciprocal || selections.to));
+
+  const handleConfirm = async () => {
+    if (!interactive || !selections.from || !proposal.toMember) return;
+    if (proposal.includeReciprocal && !selections.to) return;
+
+    setProposal((p) => ({ ...p, submitting: true, error: null }));
+    try {
+      await interactive.onSubmit({
+        toMember: proposal.toMember,
+        fromStart: selections.from.start,
+        fromEnd: selections.from.end,
+        toStart: proposal.includeReciprocal && selections.to ? selections.to.start : null,
+        toEnd: proposal.includeReciprocal && selections.to ? selections.to.end : null,
+        message: proposal.message.trim() || null,
+      });
+      resetProposal();
+    } catch (err) {
+      setProposal((p) => ({
+        ...p,
+        submitting: false,
+        error: err instanceof Error ? err.message : 'Failed to submit request',
+      }));
+    }
+  };
+
   return (
-    <div className="mt-6 space-y-6">
+    <div className="mt-6 space-y-6" onMouseUp={finishDrag} onMouseLeave={finishDrag}>
       <h3 className="text-sm font-semibold text-gray-900">Generated {formatDateTime(result.generatedAt)}</h3>
 
       {workload.length > 0 && (
@@ -285,7 +534,88 @@ export default function ScheduleResults({ result }: { result: ScheduleResult }) 
                 <span className="text-xs font-medium text-gray-600">Understaffed</span>
               </div>
             )}
+            {interactive && (
+              <span className="text-xs text-gray-500 italic">Click or drag one of your shifts to propose a swap</span>
+            )}
           </div>
+
+          {interactive && selections.from && (
+            <div className="space-y-2 border-b border-blue-200 bg-blue-50 px-4 py-3">
+              <div className="flex flex-wrap items-end gap-3">
+                <div>
+                  <p className="text-xs text-gray-500">Give away</p>
+                  <p className="text-sm font-medium text-gray-900">
+                    {formatDateTime(selections.from.start)} &ndash; {formatDateTime(selections.from.end)}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="ui-label">Send to</label>
+                  <select
+                    className="ui-input h-9"
+                    value={proposal.toMember}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setProposal((p) => ({ ...p, toMember: val }));
+                      setSelections((s) => ({ from: s.from }));
+                    }}
+                  >
+                    <option value="" disabled>
+                      Select a member
+                    </option>
+                    {interactive.otherMembers.map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <label className="flex items-center gap-2 text-xs text-gray-900 pb-2">
+                  <input
+                    type="checkbox"
+                    checked={proposal.includeReciprocal}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setProposal((p) => ({ ...p, includeReciprocal: checked }));
+                      if (!checked) setSelections((s) => ({ from: s.from }));
+                    }}
+                  />
+                  Ask for a shift back
+                </label>
+
+                <input
+                  type="text"
+                  className="ui-input h-9 max-w-[200px]"
+                  placeholder="Message (optional)"
+                  value={proposal.message}
+                  onChange={(e) => setProposal((p) => ({ ...p, message: e.target.value }))}
+                />
+
+                <button
+                  disabled={!canSubmit || proposal.submitting}
+                  onClick={handleConfirm}
+                  className="ui-btn-primary h-9 px-4 text-sm"
+                >
+                  {proposal.submitting ? 'Sending...' : 'Send Request'}
+                </button>
+                <button onClick={resetProposal} className="ui-btn-secondary h-9 px-3 text-sm">
+                  Cancel
+                </button>
+              </div>
+
+              {proposal.includeReciprocal && (
+                <p className="text-xs text-gray-600">
+                  {selections.to
+                    ? `In return for ${formatDateTime(selections.to.start)} – ${formatDateTime(selections.to.end)}`
+                    : proposal.toMember
+                      ? `Click one of ${proposal.toMember}'s shifts on the calendar`
+                      : 'Pick a member first'}
+                </p>
+              )}
+              {proposal.error && <p className="text-xs text-red-600">{proposal.error}</p>}
+            </div>
+          )}
 
           {totalWeeks > 1 && (
             <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-200">
@@ -318,7 +648,7 @@ export default function ScheduleResults({ result }: { result: ScheduleResult }) 
                     <div
                       key={m}
                       className="absolute left-0 right-0 -translate-y-1/2 pr-2 text-right text-[10px] text-gray-500"
-                      style={{ top: `${((m - windowStartMin) / windowLength) * 100}%` }}
+                      style={{ top: `${pctTop(m)}%` }}
                     >
                       {formatTimeOfDay(m)}
                     </div>
@@ -329,6 +659,8 @@ export default function ScheduleResults({ result }: { result: ScheduleResult }) 
               {visibleDays.map((day) => {
                 const segs = segmentsByDay.get(day.key) ?? [];
                 const gaps = understaffedByDay.get(day.key) ?? [];
+                const overlays = overlaysByDay.get(day.key) ?? [];
+                const previews = previewByDay.get(day.key) ?? [];
                 return (
                   <div key={day.key} className="flex-1 min-w-[140px] border-r border-gray-200 last:border-r-0">
                     <div className="h-12 border-b border-gray-200 flex flex-col items-center justify-center">
@@ -344,7 +676,7 @@ export default function ScheduleResults({ result }: { result: ScheduleResult }) 
                         <div
                           key={m}
                           className="absolute left-0 right-0 border-t border-gray-100"
-                          style={{ top: `${((m - windowStartMin) / windowLength) * 100}%` }}
+                          style={{ top: `${pctTop(m)}%` }}
                         />
                       ))}
 
@@ -354,8 +686,8 @@ export default function ScheduleResults({ result }: { result: ScheduleResult }) 
                           title={`Understaffed: ${gap.range.filled}/${gap.range.required} filled`}
                           className="absolute left-0 right-0 rounded-sm"
                           style={{
-                            top: `${((gap.startMin - windowStartMin) / windowLength) * 100}%`,
-                            height: `${((gap.endMin - gap.startMin) / windowLength) * 100}%`,
+                            top: `${pctTop(gap.startMin)}%`,
+                            height: `${pctHeight(gap.startMin, gap.endMin)}%`,
                             border: `1px solid ${UNDERSTAFFED_COLOR}88`,
                             backgroundImage: `repeating-linear-gradient(45deg, ${UNDERSTAFFED_COLOR}33 0, ${UNDERSTAFFED_COLOR}33 2px, transparent 2px, transparent 6px)`,
                           }}
@@ -363,30 +695,128 @@ export default function ScheduleResults({ result }: { result: ScheduleResult }) 
                       ))}
 
                       {segs.map((seg) => {
-                        const color = memberColor.get(seg.label) ?? getMemberColor(0);
+                        const color = memberColor.get(seg.memberName) ?? getMemberColor(0);
                         const widthPct = 100 / seg.colCount;
+                        const fromDraggable = Boolean(interactive && seg.memberName === interactive.viewerName);
+                        const toDraggable = Boolean(
+                          interactive && proposal.includeReciprocal && proposal.toMember && seg.memberName === proposal.toMember
+                        );
+                        const draggable = fromDraggable || toDraggable;
+                        const slot: SelectionSlot = fromDraggable ? 'from' : 'to';
+                        const left = `calc(${seg.col * widthPct}% + 2px)`;
+                        const width = `calc(${widthPct}% - 4px)`;
+
+                        const cellMinutes: number[] = [];
+                        if (draggable) {
+                          for (let m = seg.startMin; m < seg.endMin; m += snapMinutes) cellMinutes.push(m);
+                        }
+
+                        return (
+                          <div key={seg.key}>
+                            <div
+                              title={`${seg.memberName}: ${formatTimeOfDay(seg.startMin)} – ${formatTimeOfDay(seg.endMin)}`}
+                              className={`absolute rounded-md px-1.5 py-0.5 overflow-hidden shadow-sm${draggable ? ' cursor-crosshair' : ''}`}
+                              style={{
+                                top: `${pctTop(seg.startMin)}%`,
+                                height: `${Math.max(pctHeight(seg.startMin, seg.endMin), 4)}%`,
+                                left,
+                                width,
+                                backgroundColor: color,
+                                minHeight: '18px',
+                              }}
+                            >
+                              <div className="flex items-center gap-1 text-[10px] font-medium text-white leading-tight">
+                                <span className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-white/25 text-[8px]">
+                                  {initials(seg.memberName)}
+                                </span>
+                                <span className="truncate">{seg.memberName}</span>
+                              </div>
+                            </div>
+
+                            {cellMinutes.map((m) => {
+                              const start = cellTime(day.date, m);
+                              return (
+                                <div
+                                  key={`cell-${seg.key}-${m}`}
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    beginCellDrag(slot, seg.memberName, seg.assignmentStart, seg.assignmentEnd, start);
+                                  }}
+                                  onMouseEnter={() => extendCellDrag(start)}
+                                  className="absolute cursor-crosshair"
+                                  style={{
+                                    top: `${pctTop(m)}%`,
+                                    height: `${pctHeight(m, m + snapMinutes)}%`,
+                                    left,
+                                    width,
+                                  }}
+                                />
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+
+                      {previews.map((p, idx) => {
+                        const widthPct = 100 / p.colCount;
                         return (
                           <div
-                            key={seg.key}
-                            title={`${seg.label}: ${formatTimeOfDay(seg.startMin)} – ${formatTimeOfDay(seg.endMin)}`}
-                            className="absolute rounded-md px-1.5 py-0.5 overflow-hidden shadow-sm"
+                            key={`preview-${idx}`}
+                            className="absolute flex items-start justify-start rounded-md border-2 border-dashed px-1 py-0.5 pointer-events-none"
                             style={{
-                              top: `${((seg.startMin - windowStartMin) / windowLength) * 100}%`,
-                              height: `${Math.max(((seg.endMin - seg.startMin) / windowLength) * 100, 4)}%`,
-                              left: `calc(${seg.col * widthPct}% + 2px)`,
+                              top: `${pctTop(p.startMin)}%`,
+                              height: `${pctHeight(p.startMin, p.endMin)}%`,
+                              left: `calc(${p.col * widthPct}% + 2px)`,
                               width: `calc(${widthPct}% - 4px)`,
-                              backgroundColor: color,
-                              minHeight: '18px',
+                              borderColor: p.color,
+                              backgroundColor: `${p.color}22`,
                             }}
                           >
-                            <div className="flex items-center gap-1 text-[10px] font-medium text-white leading-tight">
-                              <span
-                                className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-white/25 text-[8px]"
-                              >
-                                {initials(seg.label)}
-                              </span>
-                              <span className="truncate">{seg.label}</span>
-                            </div>
+                            <span className="rounded bg-white/85 px-1 text-[9px] font-semibold" style={{ color: p.color }}>
+                              {p.label}
+                            </span>
+                          </div>
+                        );
+                      })}
+
+                      {overlays.map((ov, idx) => {
+                        const isFrom = ov.slot === 'from';
+                        const borderColor = isFrom ? '#2563eb' : '#d97706';
+                        const fillColor = isFrom ? 'rgba(37,99,235,0.3)' : 'rgba(217,119,6,0.3)';
+                        const widthPct = 100 / ov.colCount;
+                        return (
+                          <div
+                            key={`overlay-${ov.slot}-${idx}`}
+                            className="absolute rounded-md pointer-events-none"
+                            style={{
+                              top: `${pctTop(ov.startMin)}%`,
+                              height: `${pctHeight(ov.startMin, ov.endMin)}%`,
+                              left: `calc(${ov.col * widthPct}% + 2px)`,
+                              width: `calc(${widthPct}% - 4px)`,
+                              border: `2px dashed ${borderColor}`,
+                              backgroundColor: fillColor,
+                            }}
+                          >
+                            {ov.isFirst && (
+                              <div
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  beginEdgeDrag(ov.slot, 'start');
+                                }}
+                                className="pointer-events-auto absolute -top-1 left-0 right-0 h-2 cursor-ns-resize"
+                              />
+                            )}
+                            {ov.isLast && (
+                              <div
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  beginEdgeDrag(ov.slot, 'end');
+                                }}
+                                className="pointer-events-auto absolute -bottom-1 left-0 right-0 h-2 cursor-ns-resize"
+                              />
+                            )}
                           </div>
                         );
                       })}
