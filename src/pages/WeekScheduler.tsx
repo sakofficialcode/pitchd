@@ -482,30 +482,18 @@ export default function WeekScheduler({
           {!readOnly && (
             <>
               {!authorized ? (
-                <button
-                  onClick={signIn}
-                  className="h-10 px-4 rounded-md border border-gray-300 text-gray-900 font-medium hover:bg-gray-50 transition-colors text-sm"
-                >
+                <button onClick={signIn} className="ui-btn-secondary text-sm">
                   Import from Google
                 </button>
               ) : (
-                <button
-                  onClick={fetchEvents}
-                  className="h-10 px-4 rounded-md border border-gray-300 text-gray-900 font-medium hover:bg-gray-50 transition-colors text-sm"
-                >
+                <button onClick={fetchEvents} className="ui-btn-secondary text-sm">
                   Fetch Events
                 </button>
               )}
-              <button
-                onClick={exportToCSV}
-                className="h-10 px-4 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 transition-colors text-sm"
-              >
+              <button onClick={exportToCSV} className="ui-btn-primary text-sm">
                 Export to CSV
               </button>
-              <button
-                onClick={clearAll}
-                className="h-10 px-4 rounded-md border border-red-200 bg-red-50 text-red-700 font-medium hover:bg-red-100 transition-colors text-sm"
-              >
+              <button onClick={clearAll} className="ui-btn-danger-outline text-sm">
                 Clear All
               </button>
             </>

@@ -37,9 +37,9 @@ export default function SchedulePage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+    <div className="ui-page">
+      <div className="ui-page-content">
+        <div className="ui-card">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-bold text-gray-900">
@@ -55,34 +55,30 @@ export default function SchedulePage() {
             <div className="mt-4 flex items-end gap-3">
               {group?.hasAdminPassword && (
                 <div>
-                  <label className="text-sm font-medium text-gray-900 block mb-1">Admin Password</label>
+                  <label className="ui-label">Admin Password</label>
                   <input
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="h-10 rounded-md border border-gray-300 px-3 text-base text-gray-900 focus:outline focus:outline-2 focus:-outline-offset-1 focus:outline-blue-600"
+                    className="ui-input"
                   />
                 </div>
               )}
-              <button
-                disabled={loading}
-                onClick={loadLastSchedule}
-                className="h-10 px-4 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:text-gray-500 transition-colors"
-              >
+              <button disabled={loading} onClick={loadLastSchedule} className="ui-btn-primary">
                 {loading ? 'Loading...' : 'View Last Schedule'}
               </button>
             </div>
           )}
 
           {error && (
-            <div className="mt-4 p-3 rounded-md bg-red-50 border border-red-200">
+            <div className="ui-banner-error">
               <p className="text-sm text-red-600">{error}</p>
             </div>
           )}
         </div>
 
         {result && (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="ui-card">
             <ScheduleResults result={result} />
           </div>
         )}

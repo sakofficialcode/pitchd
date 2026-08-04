@@ -1,21 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { ScheduleResult, UnderstaffedRange } from '../lib/types';
-
-// Fixed-order categorical palette (validated for CVD-safe adjacent contrast).
-// Members are assigned slots in stable alphabetical order so a given name
-// always maps to the same color across regenerations.
-const MEMBER_COLORS = [
-  '#2a78d6', // blue
-  '#eb6834', // orange
-  '#1baf7a', // aqua
-  '#eda100', // yellow
-  '#e87ba4', // magenta
-  '#008300', // green
-  '#4a3aa7', // violet
-  '#e34948', // red
-];
-
-const CRITICAL = '#d03b3b';
+import { getMemberColor, UNDERSTAFFED_COLOR } from '../lib/colors';
 
 const HOUR_HEIGHT_PX = 48;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -148,7 +133,7 @@ export default function ScheduleResults({ result }: { result: ScheduleResult }) 
   const memberColor = useMemo(() => {
     const names = [...new Set(result.assignments.map((a) => a.memberName))].sort((a, b) => a.localeCompare(b));
     const map = new Map<string, string>();
-    names.forEach((name, i) => map.set(name, MEMBER_COLORS[i % MEMBER_COLORS.length]));
+    names.forEach((name, i) => map.set(name, getMemberColor(i)));
     return map;
   }, [result.assignments]);
 
@@ -293,8 +278,8 @@ export default function ScheduleResults({ result }: { result: ScheduleResult }) 
                 <span
                   className="inline-block h-3 w-3 shrink-0 rounded-sm border"
                   style={{
-                    borderColor: CRITICAL,
-                    backgroundImage: `repeating-linear-gradient(45deg, ${CRITICAL}55 0, ${CRITICAL}55 2px, transparent 2px, transparent 5px)`,
+                    borderColor: UNDERSTAFFED_COLOR,
+                    backgroundImage: `repeating-linear-gradient(45deg, ${UNDERSTAFFED_COLOR}55 0, ${UNDERSTAFFED_COLOR}55 2px, transparent 2px, transparent 5px)`,
                   }}
                 />
                 <span className="text-xs font-medium text-gray-600">Understaffed</span>
@@ -371,14 +356,14 @@ export default function ScheduleResults({ result }: { result: ScheduleResult }) 
                           style={{
                             top: `${((gap.startMin - windowStartMin) / windowLength) * 100}%`,
                             height: `${((gap.endMin - gap.startMin) / windowLength) * 100}%`,
-                            border: `1px solid ${CRITICAL}88`,
-                            backgroundImage: `repeating-linear-gradient(45deg, ${CRITICAL}33 0, ${CRITICAL}33 2px, transparent 2px, transparent 6px)`,
+                            border: `1px solid ${UNDERSTAFFED_COLOR}88`,
+                            backgroundImage: `repeating-linear-gradient(45deg, ${UNDERSTAFFED_COLOR}33 0, ${UNDERSTAFFED_COLOR}33 2px, transparent 2px, transparent 6px)`,
                           }}
                         />
                       ))}
 
                       {segs.map((seg) => {
-                        const color = memberColor.get(seg.label) ?? MEMBER_COLORS[0];
+                        const color = memberColor.get(seg.label) ?? getMemberColor(0);
                         const widthPct = 100 / seg.colCount;
                         return (
                           <div

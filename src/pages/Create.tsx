@@ -34,7 +34,7 @@ export default function Create() {
   const [selectedGranularity, setSelectedGranularity] = React.useState<15 | 30 | 60>(30);
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
+    <div className="ui-page py-8">
       <div className="max-w-4xl mx-auto bg-white rounded-lg shadow-sm border border-gray-200 p-8">
         <h1 className="text-2xl font-bold text-gray-900 mb-6">Create New Group</h1>
 
@@ -80,14 +80,14 @@ export default function Create() {
         >
           {/* Group Name */}
           <Field.Root name="groupName" className="flex flex-col gap-1">
-            <Field.Label className="text-sm font-medium text-gray-900">
+            <Field.Label className="ui-label">
               Group Name
             </Field.Label>
             <Field.Control
               type="text"
               required
               placeholder="Joe's Tent"
-              className="h-10 w-full rounded-md border border-gray-300 px-3 text-base text-gray-900 focus:outline focus:outline-2 focus:-outline-offset-1 focus:outline-blue-600 focus:border-blue-600"
+              className="ui-input"
             />
             <Field.Error className="text-sm text-red-600" />
           </Field.Root>
@@ -103,7 +103,7 @@ export default function Create() {
                 required
                 className="flex flex-col gap-1"
               >
-                <Field.Label className="text-sm font-medium text-gray-900">
+                <Field.Label className="ui-label">
                   Number of Members
                 </Field.Label>
                 <NumberField.Group className="flex">
@@ -128,7 +128,7 @@ export default function Create() {
                 required
                 className="flex flex-col gap-1"
               >
-                <Field.Label className="text-sm font-medium text-gray-900">
+                <Field.Label className="ui-label">
                   People Per Shift
                 </Field.Label>
                 <NumberField.Group className="flex">
@@ -148,25 +148,25 @@ export default function Create() {
           {/* Schedule Date Range */}
           <div className="grid grid-cols-2 gap-4">
             <Field.Root name="shiftStart" className="flex flex-col gap-1">
-              <Field.Label className="text-sm font-medium text-gray-900">
+              <Field.Label className="ui-label">
                 Schedule Start
               </Field.Label>
               <Field.Control
                 type="datetime-local"
                 required
-                className="h-10 w-full rounded-md border border-gray-300 px-3 text-base text-gray-900 focus:outline focus:outline-2 focus:-outline-offset-1 focus:outline-blue-600 focus:border-blue-600"
+                className="ui-input"
               />
               <Field.Error className="text-sm text-red-600" />
             </Field.Root>
 
             <Field.Root name="shiftEnd" className="flex flex-col gap-1">
-              <Field.Label className="text-sm font-medium text-gray-900">
+              <Field.Label className="ui-label">
                 Schedule End
               </Field.Label>
               <Field.Control
                 type="datetime-local"
                 required
-                className="h-10 w-full rounded-md border border-gray-300 px-3 text-base text-gray-900 focus:outline focus:outline-2 focus:-outline-offset-1 focus:outline-blue-600 focus:border-blue-600"
+                className="ui-input"
               />
               <Field.Error className="text-sm text-red-600" />
             </Field.Root>
@@ -174,7 +174,7 @@ export default function Create() {
 
           {/* Time Granularity */}
           <Field.Root name="timeGranularity" className="flex flex-col gap-1">
-            <Field.Label className="text-sm font-medium text-gray-900">
+            <Field.Label className="ui-label">
               Shift Duration
             </Field.Label>
             <Select.Root
@@ -221,7 +221,7 @@ export default function Create() {
             >
               <Switch.Thumb className="inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform data-[checked]:translate-x-5 translate-x-0.5" />
             </Switch.Root>
-            <Field.Label className="text-sm font-medium text-gray-900 cursor-pointer">
+            <Field.Label className="ui-label mb-0 cursor-pointer">
               Enable Night Shifts
             </Field.Label>
           </Field.Root>
@@ -231,7 +231,7 @@ export default function Create() {
             <div className="space-y-4 p-4 bg-gray-50 rounded-md border border-gray-200">
               <Field.Root name="nightHours" className="flex flex-col gap-3">
                 <Fieldset.Root className="flex flex-col gap-2">
-                  <Fieldset.Legend className="text-sm font-medium text-gray-900">
+                  <Fieldset.Legend className="ui-label">
                     Night Shift Hours: {formatHour(nightHours[0])} - {formatHour(nightHours[1])}
                   </Fieldset.Legend>
                   <Slider.Root
@@ -267,7 +267,7 @@ export default function Create() {
                   required={nightShifts}
                   className="flex flex-col gap-1"
                 >
-                  <Field.Label className="text-sm font-medium text-gray-900">
+                  <Field.Label className="ui-label">
                     People Per Night Shift
                   </Field.Label>
                   <NumberField.Group className="flex">
@@ -287,13 +287,13 @@ export default function Create() {
 
           {/* Admin Password */}
           <Field.Root name="adminPassword" className="flex flex-col gap-1">
-            <Field.Label className="text-sm font-medium text-gray-900">
+            <Field.Label className="ui-label">
               Admin Password <span className="text-gray-500 font-normal">(Optional)</span>
             </Field.Label>
             <Field.Control
               type="password"
               placeholder="Leave blank for none"
-              className="h-10 w-full rounded-md border border-gray-300 px-3 text-base text-gray-900 focus:outline focus:outline-2 focus:-outline-offset-1 focus:outline-blue-600 focus:border-blue-600"
+              className="ui-input"
             />
             <p className="text-xs text-gray-600">
               Set a password if you want to restrict admin actions
@@ -312,7 +312,7 @@ export default function Create() {
           <Button
             disabled={loading}
             type="submit"
-            className="h-11 px-6 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 active:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 focus-visible:outline-offset-2 disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed transition-colors"
+            className="ui-btn-primary h-11 px-6 active:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 focus-visible:outline-offset-2 disabled:cursor-not-allowed"
           >
             {loading ? 'Creating Group...' : 'Create Group'}
           </Button>

@@ -1,1 +1,43 @@
 @import "tailwindcss";
+
+@layer components {
+  /* Page shell: every top-level page uses the same background + centered column. */
+  .ui-page {
+    @apply min-h-screen bg-gray-100;
+  }
+  .ui-page-content {
+    @apply max-w-5xl mx-auto px-6 py-8 space-y-6;
+  }
+  .ui-page-centered {
+    @apply min-h-screen bg-gray-100 flex items-center justify-center;
+  }
+
+  /* Card: the white bordered panel used throughout scheduler/admin pages. */
+  .ui-card {
+    @apply bg-white rounded-lg shadow-sm border border-gray-200 p-6;
+  }
+
+  /* Form controls */
+  .ui-label {
+    @apply text-sm font-medium text-gray-900 block mb-1;
+  }
+  .ui-input {
+    @apply h-10 w-full rounded-md border border-gray-300 px-3 text-base text-gray-900 focus:outline focus:outline-2 focus:-outline-offset-1 focus:outline-blue-600;
+  }
+
+  /* Buttons */
+  .ui-btn-primary {
+    @apply h-10 px-4 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:text-gray-500 transition-colors;
+  }
+  .ui-btn-secondary {
+    @apply h-10 px-4 rounded-md border border-gray-300 text-gray-900 font-medium hover:bg-gray-50 disabled:text-gray-400 transition-colors;
+  }
+  .ui-btn-danger-outline {
+    @apply h-10 px-4 rounded-md border border-red-200 bg-red-50 text-red-700 font-medium hover:bg-red-100 transition-colors;
+  }
+
+  /* Inline status/callout banners */
+  .ui-banner-error {
+    @apply mt-4 p-3 rounded-md bg-red-50 border border-red-200;
+  }
+}

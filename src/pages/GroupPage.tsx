@@ -75,7 +75,8 @@ export default function GroupPage() {
     setAuthStatus('idle');
   };
 
-  const handleCredentialsBlur = () => {
+  const handleContinue = (e: React.FormEvent) => {
+    e.preventDefault();
     attemptLogin(memberName, memberPassword);
   };
 
@@ -97,7 +98,7 @@ export default function GroupPage() {
 
   if (groupError) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="ui-page-centered">
         <p className="text-red-600">{groupError}</p>
       </div>
     );
@@ -105,18 +106,18 @@ export default function GroupPage() {
 
   if (!group) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="ui-page-centered">
         <p className="text-gray-500">Loading group...</p>
       </div>
     );
   }
 
-  const unlocked = memberName.trim() !== '' && memberPassword !== '' && authStatus !== 'invalid';
+  const unlocked = authStatus === 'existing' || authStatus === 'new';
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+    <div className="ui-page">
+      <div className="ui-page-content">
+        <div className="ui-card">
           <div className="flex items-start justify-between">
             <h1 className="text-2xl font-bold text-gray-900">{group.groupName}</h1>
             <Link to={`/${uuid}/admin`} className="text-sm text-blue-600 hover:underline">
@@ -128,30 +129,35 @@ export default function GroupPage() {
             {group.nightShifts ? ` (${group.nightOnShift} at night)` : ''}
           </p>
 
-          <div className="mt-4 flex flex-wrap gap-4">
+          <form onSubmit={handleContinue} className="mt-4 flex flex-wrap items-end gap-4">
             <div className="max-w-xs">
-              <label className="text-sm font-medium text-gray-900 block mb-1">Your Name</label>
+              <label className="ui-label">Your Name</label>
               <input
                 type="text"
                 value={memberName}
                 onChange={handleNameChange}
-                onBlur={handleCredentialsBlur}
                 placeholder="Enter your name"
-                className="h-10 w-full rounded-md border border-gray-300 px-3 text-base text-gray-900 focus:outline focus:outline-2 focus:-outline-offset-1 focus:outline-blue-600"
+                className="ui-input"
               />
             </div>
             <div className="max-w-xs">
-              <label className="text-sm font-medium text-gray-900 block mb-1">Password</label>
+              <label className="ui-label">Password</label>
               <input
                 type="password"
                 value={memberPassword}
                 onChange={handlePasswordChange}
-                onBlur={handleCredentialsBlur}
                 placeholder="New here? Just pick one"
-                className="h-10 w-full rounded-md border border-gray-300 px-3 text-base text-gray-900 focus:outline focus:outline-2 focus:-outline-offset-1 focus:outline-blue-600"
+                className="ui-input"
               />
             </div>
-          </div>
+            <button
+              type="submit"
+              disabled={!memberName.trim() || !memberPassword || authStatus === 'checking'}
+              className="ui-btn-primary"
+            >
+              {authStatus === 'checking' ? 'Checking...' : 'Continue'}
+            </button>
+          </form>
 
           {authStatus === 'checking' && <p className="mt-2 text-sm text-gray-500">Checking...</p>}
           {authStatus === 'new' && (
@@ -163,34 +169,43 @@ export default function GroupPage() {
           {authStatus === 'invalid' && <p className="mt-2 text-sm text-red-600">{authError}</p>}
         </div>
 
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-          <WeekScheduler
-            key={memberName.trim() || 'anonymous'}
-            slotMinutes={group.timeGranularity}
-            initialAvailability={loadedAvailability}
-            initialStartDateTime={group.shiftStart}
-            initialEndDateTime={group.shiftEnd}
-            onAvailabilityChange={setCurrentAvailability}
-            readOnly={!unlocked}
-            nightShifts={group.nightShifts}
-            nightShiftStart={group.nightShiftStart}
-            nightShiftEnd={group.nightShiftEnd}
-          />
-        </div>
+        {unlocked ? (
+          <>
+            <div className="ui-card !p-0 overflow-hidden">
+              <WeekScheduler
+                key={memberName.trim() || 'anonymous'}
+                slotMinutes={group.timeGranularity}
+                initialAvailability={loadedAvailability}
+                initialStartDateTime={group.shiftStart}
+                initialEndDateTime={group.shiftEnd}
+                onAvailabilityChange={setCurrentAvailability}
+                nightShifts={group.nightShifts}
+                nightShiftStart={group.nightShiftStart}
+                nightShiftEnd={group.nightShiftEnd}
+              />
+            </div>
 
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 flex items-center justify-between">
-          <div>
-            {saveStatus === 'saved' && <p className="text-sm text-green-600">Availability saved.</p>}
-            {saveStatus === 'error' && <p className="text-sm text-red-600">{saveError}</p>}
+            <div className="ui-card flex items-center justify-between">
+              <div>
+                {saveStatus === 'saved' && <p className="text-sm text-green-600">Availability saved.</p>}
+                {saveStatus === 'error' && <p className="text-sm text-red-600">{saveError}</p>}
+              </div>
+              <button
+                disabled={saveStatus === 'saving'}
+                onClick={handleSubmit}
+                className="ui-btn-primary h-11 px-6"
+              >
+                {saveStatus === 'saving' ? 'Saving...' : 'Submit Availability'}
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="ui-card flex items-center justify-center text-center py-16">
+            <p className="text-sm text-gray-500">
+              Enter your name and password above, then hit Continue to load the calendar.
+            </p>
           </div>
-          <button
-            disabled={!memberName.trim() || !memberPassword || saveStatus === 'saving'}
-            onClick={handleSubmit}
-            className="h-11 px-6 rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:text-gray-500 transition-colors"
-          >
-            {saveStatus === 'saving' ? 'Saving...' : 'Submit Availability'}
-          </button>
-        </div>
+        )}
       </div>
     </div>
   );
