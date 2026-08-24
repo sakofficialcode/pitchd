@@ -7,7 +7,7 @@ import { ApiError, createSwapRequest, getGroup, listSwapRequests, viewScheduleAs
 import type { GroupConfig, ScheduleResult, SwapRequest } from '../lib/types';
 
 function storageKey(uuid: string) {
-  return `pitchd:lastName:${uuid}`;
+  return `campout:lastName:${uuid}`;
 }
 
 export default function SchedulePage() {

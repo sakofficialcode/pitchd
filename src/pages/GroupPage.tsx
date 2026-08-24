@@ -5,7 +5,7 @@ import { getGroup, loginMember, saveMemberAvailability } from '../lib/api';
 import type { AvailabilityMap, GroupConfig } from '../lib/types';
 
 function storageKey(uuid: string) {
-  return `pitchd:lastName:${uuid}`;
+  return `campout:lastName:${uuid}`;
 }
 
 type AuthStatus = 'idle' | 'checking' | 'existing' | 'new' | 'invalid';

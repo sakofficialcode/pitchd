@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { verifyPassword } from './auth.ts';
 import {
+  acceptSwapRequest,
   authenticateMember,
   createGroup,
   createSwapRequest,
@@ -23,7 +24,7 @@ import type { CreateGroupPayload } from './types.ts';
 
 export const router = Router();
 
-router.post('/groups', (req, res) => {
+router.post('/groups', async (req, res) => {
   const body = req.body as Partial<CreateGroupPayload>;
 
   if (
@@ -38,27 +39,27 @@ router.post('/groups', (req, res) => {
     return;
   }
 
-  const uuid = createGroup(body as CreateGroupPayload);
+  const uuid = await createGroup(body as CreateGroupPayload);
   res.status(201).json({ uuid });
 });
 
-router.get('/groups/:uuid', (req, res) => {
-  const group = getGroup(req.params.uuid);
+router.get('/groups/:uuid', async (req, res) => {
+  const group = await getGroup(req.params.uuid);
   if (!group) {
     res.status(404).json({ error: 'Group not found' });
     return;
   }
 
-  const adminHash = getAdminPasswordHash(req.params.uuid);
+  const adminHash = await getAdminPasswordHash(req.params.uuid);
   res.json({
     ...group,
     hasAdminPassword: Boolean(adminHash),
-    members: getMemberSummaries(req.params.uuid),
+    members: await getMemberSummaries(req.params.uuid),
   });
 });
 
-router.post('/groups/:uuid/members/:memberName/login', (req, res) => {
-  const group = getGroup(req.params.uuid);
+router.post('/groups/:uuid/members/:memberName/login', async (req, res) => {
+  const group = await getGroup(req.params.uuid);
   if (!group) {
     res.status(404).json({ error: 'Group not found' });
     return;
@@ -70,7 +71,7 @@ router.post('/groups/:uuid/members/:memberName/login', (req, res) => {
     return;
   }
 
-  const result = authenticateMember(req.params.uuid, req.params.memberName, password);
+  const result = await authenticateMember(req.params.uuid, req.params.memberName, password);
   if (result.status === 'not_found') {
     res.status(404).json({ error: 'No account with that name yet' });
     return;
@@ -83,8 +84,8 @@ router.post('/groups/:uuid/members/:memberName/login', (req, res) => {
   res.json({ memberName: req.params.memberName, availability: result.availability, updatedAt: result.updatedAt });
 });
 
-router.put('/groups/:uuid/members/:memberName', (req, res) => {
-  const group = getGroup(req.params.uuid);
+router.put('/groups/:uuid/members/:memberName', async (req, res) => {
+  const group = await getGroup(req.params.uuid);
   if (!group) {
     res.status(404).json({ error: 'Group not found' });
     return;
@@ -102,7 +103,7 @@ router.put('/groups/:uuid/members/:memberName', (req, res) => {
     return;
   }
 
-  const result = saveMemberAvailability(req.params.uuid, req.params.memberName, password, availability);
+  const result = await saveMemberAvailability(req.params.uuid, req.params.memberName, password, availability);
   if (result.status === 'invalid_password') {
     res.status(401).json({ error: 'Incorrect password' });
     return;
@@ -111,43 +112,43 @@ router.put('/groups/:uuid/members/:memberName', (req, res) => {
   res.json({ memberName: req.params.memberName, updatedAt: result.updatedAt, created: result.created });
 });
 
-function checkAdminPassword(uuid: string, password: string | null | undefined): boolean {
-  const hash = getAdminPasswordHash(uuid);
+async function checkAdminPassword(uuid: string, password: string | null | undefined): Promise<boolean> {
+  const hash = await getAdminPasswordHash(uuid);
   if (!hash) return true; // no password set — endpoint is open
   return typeof password === 'string' && verifyPassword(password, hash);
 }
 
-router.post('/groups/:uuid/schedule/generate', (req, res) => {
-  const group = getGroup(req.params.uuid);
+router.post('/groups/:uuid/schedule/generate', async (req, res) => {
+  const group = await getGroup(req.params.uuid);
   if (!group) {
     res.status(404).json({ error: 'Group not found' });
     return;
   }
 
-  if (!checkAdminPassword(req.params.uuid, req.body?.adminPassword)) {
+  if (!(await checkAdminPassword(req.params.uuid, req.body?.adminPassword))) {
     res.status(403).json({ error: 'Incorrect admin password' });
     return;
   }
 
-  const members = getMembersForGroup(req.params.uuid);
+  const members = await getMembersForGroup(req.params.uuid);
   const result = generateSchedule(group, members);
-  saveSchedule(req.params.uuid, result);
+  await saveSchedule(req.params.uuid, result);
   res.json(result);
 });
 
-router.post('/groups/:uuid/schedule/view', (req, res) => {
-  const group = getGroup(req.params.uuid);
+router.post('/groups/:uuid/schedule/view', async (req, res) => {
+  const group = await getGroup(req.params.uuid);
   if (!group) {
     res.status(404).json({ error: 'Group not found' });
     return;
   }
 
-  if (!checkAdminPassword(req.params.uuid, req.body?.adminPassword)) {
+  if (!(await checkAdminPassword(req.params.uuid, req.body?.adminPassword))) {
     res.status(403).json({ error: 'Incorrect admin password' });
     return;
   }
 
-  const result = getSchedule(req.params.uuid);
+  const result = await getSchedule(req.params.uuid);
   if (!result) {
     res.status(404).json({ error: 'No schedule generated yet' });
     return;
@@ -159,8 +160,8 @@ router.post('/groups/:uuid/schedule/view', (req, res) => {
 // Members authenticate with their own name+password (not the admin
 // password) to view the schedule — anyone with the group link but no
 // account still can't see it.
-router.post('/groups/:uuid/schedule/view-as-member', (req, res) => {
-  const group = getGroup(req.params.uuid);
+router.post('/groups/:uuid/schedule/view-as-member', async (req, res) => {
+  const group = await getGroup(req.params.uuid);
   if (!group) {
     res.status(404).json({ error: 'Group not found' });
     return;
@@ -172,12 +173,12 @@ router.post('/groups/:uuid/schedule/view-as-member', (req, res) => {
     return;
   }
 
-  if (!verifyMemberPassword(req.params.uuid, memberName, password)) {
+  if (!(await verifyMemberPassword(req.params.uuid, memberName, password))) {
     res.status(401).json({ error: 'Incorrect name or password' });
     return;
   }
 
-  const result = getSchedule(req.params.uuid);
+  const result = await getSchedule(req.params.uuid);
   if (!result) {
     res.status(404).json({ error: 'No schedule generated yet' });
     return;
@@ -203,8 +204,8 @@ function findAssignmentRange(
   );
 }
 
-router.post('/groups/:uuid/swap-requests', (req, res) => {
-  const group = getGroup(req.params.uuid);
+router.post('/groups/:uuid/swap-requests', async (req, res) => {
+  const group = await getGroup(req.params.uuid);
   if (!group) {
     res.status(404).json({ error: 'Group not found' });
     return;
@@ -231,17 +232,17 @@ router.post('/groups/:uuid/swap-requests', (req, res) => {
     return;
   }
 
-  if (!verifyMemberPassword(req.params.uuid, fromMember, fromPassword)) {
+  if (!(await verifyMemberPassword(req.params.uuid, fromMember, fromPassword))) {
     res.status(401).json({ error: 'Incorrect name or password' });
     return;
   }
 
-  if (!memberExists(req.params.uuid, toMember)) {
+  if (!(await memberExists(req.params.uuid, toMember))) {
     res.status(404).json({ error: 'No member with that name' });
     return;
   }
 
-  const schedule = getSchedule(req.params.uuid);
+  const schedule = await getSchedule(req.params.uuid);
   if (!schedule) {
     res.status(404).json({ error: 'No schedule generated yet' });
     return;
@@ -258,7 +259,7 @@ router.post('/groups/:uuid/swap-requests', (req, res) => {
     return;
   }
 
-  const swapRequest = createSwapRequest(req.params.uuid, {
+  const swapRequest = await createSwapRequest(req.params.uuid, {
     fromMember,
     toMember,
     fromStart,
@@ -271,8 +272,8 @@ router.post('/groups/:uuid/swap-requests', (req, res) => {
   res.status(201).json(swapRequest);
 });
 
-router.post('/groups/:uuid/swap-requests/list', (req, res) => {
-  const group = getGroup(req.params.uuid);
+router.post('/groups/:uuid/swap-requests/list', async (req, res) => {
+  const group = await getGroup(req.params.uuid);
   if (!group) {
     res.status(404).json({ error: 'Group not found' });
     return;
@@ -284,16 +285,16 @@ router.post('/groups/:uuid/swap-requests/list', (req, res) => {
     return;
   }
 
-  if (!verifyMemberPassword(req.params.uuid, memberName, password)) {
+  if (!(await verifyMemberPassword(req.params.uuid, memberName, password))) {
     res.status(401).json({ error: 'Incorrect name or password' });
     return;
   }
 
-  res.json(getSwapRequestsForMember(req.params.uuid, memberName));
+  res.json(await getSwapRequestsForMember(req.params.uuid, memberName));
 });
 
-router.post('/groups/:uuid/swap-requests/:id/respond', (req, res) => {
-  const group = getGroup(req.params.uuid);
+router.post('/groups/:uuid/swap-requests/:id/respond', async (req, res) => {
+  const group = await getGroup(req.params.uuid);
   if (!group) {
     res.status(404).json({ error: 'Group not found' });
     return;
@@ -305,13 +306,13 @@ router.post('/groups/:uuid/swap-requests/:id/respond', (req, res) => {
     return;
   }
 
-  if (!verifyMemberPassword(req.params.uuid, memberName, password)) {
+  if (!(await verifyMemberPassword(req.params.uuid, memberName, password))) {
     res.status(401).json({ error: 'Incorrect name or password' });
     return;
   }
 
   const id = Number(req.params.id);
-  const swapRequest = getSwapRequest(req.params.uuid, id);
+  const swapRequest = await getSwapRequest(req.params.uuid, id);
   if (!swapRequest) {
     res.status(404).json({ error: 'Swap request not found' });
     return;
@@ -328,37 +329,50 @@ router.post('/groups/:uuid/swap-requests/:id/respond', (req, res) => {
   }
 
   if (!accept) {
-    setSwapRequestStatus(req.params.uuid, id, 'declined');
-    res.json({ swapRequest: getSwapRequest(req.params.uuid, id) });
+    await setSwapRequestStatus(req.params.uuid, id, 'declined');
+    res.json({ swapRequest: await getSwapRequest(req.params.uuid, id) });
     return;
   }
 
-  const schedule = getSchedule(req.params.uuid);
-  if (!schedule) {
-    res.status(404).json({ error: 'No schedule generated yet' });
-    return;
-  }
+  // acceptSwapRequest locks the swap-request and schedule rows for the
+  // duration of this transaction, so a concurrent second response to the
+  // same or an overlapping swap can't race the read-modify-write below —
+  // it blocks on the lock and then correctly sees the up-to-date status.
+  const outcome = await acceptSwapRequest(req.params.uuid, id, memberName, (schedule, swap) => {
+    const result = applySwap(schedule.assignments, {
+      fromMember: swap.fromMember,
+      fromStart: swap.fromStart,
+      fromEnd: swap.fromEnd,
+      toMember: swap.toMember,
+      toStart: swap.toStart,
+      toEnd: swap.toEnd,
+    });
 
-  const result = applySwap(schedule.assignments, {
-    fromMember: swapRequest.fromMember,
-    fromStart: swapRequest.fromStart,
-    fromEnd: swapRequest.fromEnd,
-    toMember: swapRequest.toMember,
-    toStart: swapRequest.toStart,
-    toEnd: swapRequest.toEnd,
+    if (!result.ok) {
+      return { ok: false, error: result.error };
+    }
+
+    const assignments = [...result.assignments].sort(
+      (a, b) => a.start.localeCompare(b.start) || a.memberName.localeCompare(b.memberName)
+    );
+    return { ok: true, schedule: { ...schedule, assignments } };
   });
 
-  if (!result.ok) {
-    res.status(409).json({ error: result.error });
-    return;
+  switch (outcome.status) {
+    case 'not_found':
+      res.status(404).json({ error: 'Swap request not found' });
+      return;
+    case 'forbidden':
+      res.status(403).json({ error: 'Only the requested member can respond to this request' });
+      return;
+    case 'no_schedule':
+      res.status(404).json({ error: 'No schedule generated yet' });
+      return;
+    case 'conflict':
+      res.status(409).json({ error: outcome.message });
+      return;
+    case 'ok':
+      res.json({ swapRequest: outcome.swapRequest, schedule: outcome.schedule });
+      return;
   }
-
-  const assignments = [...result.assignments].sort(
-    (a, b) => a.start.localeCompare(b.start) || a.memberName.localeCompare(b.memberName)
-  );
-  const updatedSchedule = { ...schedule, assignments };
-  saveSchedule(req.params.uuid, updatedSchedule);
-  setSwapRequestStatus(req.params.uuid, id, 'accepted');
-
-  res.json({ swapRequest: getSwapRequest(req.params.uuid, id), schedule: updatedSchedule });
 });

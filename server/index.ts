@@ -8,5 +8,5 @@ app.use(express.json());
 app.use('/api', router);
 
 app.listen(PORT, () => {
-  console.log(`Pitchd API listening on http://localhost:${PORT}`);
+  console.log(`Campout API listening on http://localhost:${PORT}`);
 });

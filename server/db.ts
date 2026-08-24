@@ -1,8 +1,5 @@
-import Database from 'better-sqlite3';
+import pg from 'pg';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { hashPassword, verifyPassword } from './auth.ts';
 import type {
   AvailabilityMap,
@@ -14,72 +11,16 @@ import type {
   SwapStatus,
 } from './types.ts';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const dataDir = join(__dirname, 'data');
-mkdirSync(dataDir, { recursive: true });
+const { Pool } = pg;
 
-const db = new Database(join(dataDir, 'pitchd.sqlite3'));
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: 10,
+  connectionTimeoutMillis: 10_000,
+});
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS groups (
-    id                  TEXT PRIMARY KEY,
-    group_name          TEXT NOT NULL,
-    num_members         INTEGER NOT NULL,
-    shift_start         TEXT NOT NULL,
-    shift_end           TEXT NOT NULL,
-    std_on_shift        INTEGER NOT NULL,
-    time_granularity    INTEGER NOT NULL,
-    night_shifts        INTEGER NOT NULL DEFAULT 0,
-    night_shift_start   INTEGER,
-    night_shift_end     INTEGER,
-    night_on_shift      INTEGER,
-    admin_password_hash TEXT,
-    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS members (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    group_id      TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    member_name   TEXT NOT NULL,
-    availability  TEXT NOT NULL DEFAULT '{}',
-    password_hash TEXT NOT NULL DEFAULT '',
-    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(group_id, member_name)
-  );
-
-  CREATE TABLE IF NOT EXISTS schedules (
-    group_id     TEXT PRIMARY KEY REFERENCES groups(id) ON DELETE CASCADE,
-    result_json  TEXT NOT NULL,
-    generated_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS swap_requests (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    group_id      TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    from_member   TEXT NOT NULL,
-    to_member     TEXT NOT NULL,
-    from_start    TEXT NOT NULL,
-    from_end      TEXT NOT NULL,
-    to_start      TEXT,
-    to_end        TEXT,
-    message       TEXT,
-    status        TEXT NOT NULL DEFAULT 'pending',
-    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-    responded_at  TEXT
-  );
-`);
-
-// Older databases predate the members table's move from access tokens to
-// per-member passwords.
-const memberColumns = db.prepare('PRAGMA table_info(members)').all() as { name: string }[];
-if (!memberColumns.some((c) => c.name === 'password_hash')) {
-  db.exec("ALTER TABLE members ADD COLUMN password_hash TEXT NOT NULL DEFAULT ''");
-}
-if (memberColumns.some((c) => c.name === 'access_token')) {
-  db.exec('ALTER TABLE members DROP COLUMN access_token');
+export async function closeDb(): Promise<void> {
+  await pool.end();
 }
 
 interface GroupRow {
@@ -90,7 +31,7 @@ interface GroupRow {
   shift_end: string;
   std_on_shift: number;
   time_granularity: number;
-  night_shifts: number;
+  night_shifts: boolean;
   night_shift_start: number | null;
   night_shift_end: number | null;
   night_on_shift: number | null;
@@ -106,85 +47,90 @@ function rowToConfig(row: GroupRow): GroupConfig {
     shiftEnd: row.shift_end,
     stdOnShift: row.std_on_shift,
     timeGranularity: row.time_granularity as 15 | 30 | 60,
-    nightShifts: Boolean(row.night_shifts),
+    nightShifts: row.night_shifts,
     nightShiftStart: row.night_shift_start,
     nightShiftEnd: row.night_shift_end,
     nightOnShift: row.night_on_shift,
   };
 }
 
-export function createGroup(payload: CreateGroupPayload): string {
+export async function createGroup(payload: CreateGroupPayload): Promise<string> {
   const uuid = randomUUID();
   const adminPasswordHash = payload.adminPassword ? hashPassword(payload.adminPassword) : null;
 
-  db.prepare(
+  await pool.query(
     `INSERT INTO groups (
       id, group_name, num_members, shift_start, shift_end, std_on_shift,
       time_granularity, night_shifts, night_shift_start, night_shift_end,
-      night_on_shift, admin_password_hash
-    ) VALUES (@id, @groupName, @numMembers, @shiftStart, @shiftEnd, @stdOnShift,
-      @timeGranularity, @nightShifts, @nightShiftStart, @nightShiftEnd,
-      @nightOnShift, @adminPasswordHash)`
-  ).run({
-    id: uuid,
-    groupName: payload.groupName,
-    numMembers: payload.numMembers,
-    shiftStart: payload.shiftStart,
-    shiftEnd: payload.shiftEnd,
-    stdOnShift: payload.stdOnShift,
-    timeGranularity: payload.timeGranularity,
-    nightShifts: payload.nightShifts ? 1 : 0,
-    nightShiftStart: payload.nightShifts ? payload.nightShiftStart ?? null : null,
-    nightShiftEnd: payload.nightShifts ? payload.nightShiftEnd ?? null : null,
-    nightOnShift: payload.nightShifts ? payload.nightOnShift ?? null : null,
-    adminPasswordHash,
-  });
+      night_on_shift, admin_password_hash, created_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+    [
+      uuid,
+      payload.groupName,
+      payload.numMembers,
+      payload.shiftStart,
+      payload.shiftEnd,
+      payload.stdOnShift,
+      payload.timeGranularity,
+      payload.nightShifts,
+      payload.nightShifts ? payload.nightShiftStart ?? null : null,
+      payload.nightShifts ? payload.nightShiftEnd ?? null : null,
+      payload.nightShifts ? payload.nightOnShift ?? null : null,
+      adminPasswordHash,
+      new Date().toISOString(),
+    ]
+  );
 
   return uuid;
 }
 
-export function getGroup(uuid: string): GroupConfig | undefined {
-  const row = db.prepare('SELECT * FROM groups WHERE id = ?').get(uuid) as GroupRow | undefined;
-  return row ? rowToConfig(row) : undefined;
+export async function getGroup(uuid: string): Promise<GroupConfig | undefined> {
+  const { rows } = await pool.query<GroupRow>('SELECT * FROM groups WHERE id = $1', [uuid]);
+  return rows[0] ? rowToConfig(rows[0]) : undefined;
 }
 
-export function getAdminPasswordHash(uuid: string): string | null | undefined {
-  const row = db.prepare('SELECT admin_password_hash FROM groups WHERE id = ?').get(uuid) as
-    | { admin_password_hash: string | null }
-    | undefined;
-  return row?.admin_password_hash;
+export async function getAdminPasswordHash(uuid: string): Promise<string | null | undefined> {
+  const { rows } = await pool.query<{ admin_password_hash: string | null }>(
+    'SELECT admin_password_hash FROM groups WHERE id = $1',
+    [uuid]
+  );
+  return rows[0]?.admin_password_hash;
 }
 
 interface MemberRow {
   member_name: string;
-  availability: string;
+  availability: AvailabilityMap;
   password_hash: string;
   updated_at: string;
 }
 
-export function getMembersForGroup(groupId: string): MemberAvailability[] {
-  const rows = db
-    .prepare('SELECT member_name, availability FROM members WHERE group_id = ?')
-    .all(groupId) as MemberRow[];
+export async function getMembersForGroup(groupId: string): Promise<MemberAvailability[]> {
+  const { rows } = await pool.query<MemberRow>(
+    'SELECT member_name, availability FROM members WHERE group_id = $1',
+    [groupId]
+  );
 
   return rows.map((row) => ({
     memberName: row.member_name,
-    availability: JSON.parse(row.availability) as AvailabilityMap,
+    availability: row.availability,
   }));
 }
 
-export function getMemberSummaries(groupId: string): { memberName: string; updatedAt: string }[] {
-  const rows = db
-    .prepare('SELECT member_name, updated_at FROM members WHERE group_id = ? ORDER BY member_name')
-    .all(groupId) as MemberRow[];
+export async function getMemberSummaries(groupId: string): Promise<{ memberName: string; updatedAt: string }[]> {
+  const { rows } = await pool.query<{ member_name: string; updated_at: string }>(
+    'SELECT member_name, updated_at FROM members WHERE group_id = $1 ORDER BY member_name',
+    [groupId]
+  );
 
   return rows.map((row) => ({ memberName: row.member_name, updatedAt: row.updated_at }));
 }
 
-export function getMember(groupId: string, memberName: string): MemberRow | undefined {
-  return db
-    .prepare('SELECT member_name, availability, password_hash, updated_at FROM members WHERE group_id = ? AND member_name = ?')
-    .get(groupId, memberName) as MemberRow | undefined;
+export async function getMember(groupId: string, memberName: string): Promise<MemberRow | undefined> {
+  const { rows } = await pool.query<MemberRow>(
+    'SELECT member_name, availability, password_hash, updated_at FROM members WHERE group_id = $1 AND member_name = $2',
+    [groupId, memberName]
+  );
+  return rows[0];
 }
 
 export type MemberAuthResult =
@@ -195,74 +141,95 @@ export type MemberAuthResult =
 // Every member name is bound to a password set on first submission. Reading
 // someone's availability requires that password, so a stranger who simply
 // types someone else's name can't view or overwrite their data.
-export function authenticateMember(groupId: string, memberName: string, password: string): MemberAuthResult {
-  const existing = getMember(groupId, memberName);
+export async function authenticateMember(groupId: string, memberName: string, password: string): Promise<MemberAuthResult> {
+  const existing = await getMember(groupId, memberName);
   if (!existing) return { status: 'not_found' };
   if (!verifyPassword(password, existing.password_hash)) return { status: 'invalid_password' };
-  return { status: 'ok', availability: JSON.parse(existing.availability), updatedAt: existing.updated_at };
+  return { status: 'ok', availability: existing.availability, updatedAt: existing.updated_at };
 }
 
 export type SaveMemberResult =
   | { status: 'ok'; updatedAt: string; created: boolean }
   | { status: 'invalid_password' };
 
-export function saveMemberAvailability(
+export async function saveMemberAvailability(
   groupId: string,
   memberName: string,
   password: string,
   availability: AvailabilityMap
-): SaveMemberResult {
-  const existing = getMember(groupId, memberName);
+): Promise<SaveMemberResult> {
   const now = new Date().toISOString();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-  if (!existing) {
-    db.prepare(
-      `INSERT INTO members (group_id, member_name, availability, password_hash, updated_at)
-       VALUES (@groupId, @memberName, @availability, @passwordHash, @updatedAt)`
-    ).run({
-      groupId,
-      memberName,
-      availability: JSON.stringify(availability),
-      passwordHash: hashPassword(password),
-      updatedAt: now,
-    });
-    return { status: 'ok', updatedAt: now, created: true };
+    // Try to win the race for a brand-new member first. If two concurrent
+    // requests both attempt this for the same (groupId, memberName),
+    // Postgres serializes them on the UNIQUE index: the winner gets a row
+    // back, the loser gets zero rows (not a thrown constraint violation)
+    // and falls through to the existing-member path below.
+    const inserted = await client.query(
+      `INSERT INTO members (group_id, member_name, availability, password_hash, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $5)
+       ON CONFLICT (group_id, member_name) DO NOTHING
+       RETURNING updated_at`,
+      [groupId, memberName, JSON.stringify(availability), hashPassword(password), now]
+    );
+
+    if (inserted.rowCount === 1) {
+      await client.query('COMMIT');
+      return { status: 'ok', updatedAt: now, created: true };
+    }
+
+    const existing = await client.query<{ password_hash: string }>(
+      'SELECT password_hash FROM members WHERE group_id = $1 AND member_name = $2 FOR UPDATE',
+      [groupId, memberName]
+    );
+    const passwordHash = existing.rows[0]?.password_hash ?? '';
+
+    if (!verifyPassword(password, passwordHash)) {
+      await client.query('ROLLBACK');
+      return { status: 'invalid_password' };
+    }
+
+    await client.query(
+      `UPDATE members SET availability = $1, updated_at = $2 WHERE group_id = $3 AND member_name = $4`,
+      [JSON.stringify(availability), now, groupId, memberName]
+    );
+    await client.query('COMMIT');
+    return { status: 'ok', updatedAt: now, created: false };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
   }
-
-  if (!verifyPassword(password, existing.password_hash)) {
-    return { status: 'invalid_password' };
-  }
-
-  db.prepare(
-    `UPDATE members SET availability = @availability, updated_at = @updatedAt
-     WHERE group_id = @groupId AND member_name = @memberName`
-  ).run({ groupId, memberName, availability: JSON.stringify(availability), updatedAt: now });
-
-  return { status: 'ok', updatedAt: now, created: false };
 }
 
-export function saveSchedule(groupId: string, result: ScheduleResult): void {
-  db.prepare(
+export async function saveSchedule(groupId: string, result: ScheduleResult): Promise<void> {
+  await pool.query(
     `INSERT INTO schedules (group_id, result_json, generated_at)
-     VALUES (@groupId, @resultJson, @generatedAt)
-     ON CONFLICT(group_id) DO UPDATE SET result_json = @resultJson, generated_at = @generatedAt`
-  ).run({ groupId, resultJson: JSON.stringify(result), generatedAt: result.generatedAt });
+     VALUES ($1, $2, $3)
+     ON CONFLICT (group_id) DO UPDATE SET result_json = EXCLUDED.result_json, generated_at = EXCLUDED.generated_at`,
+    [groupId, JSON.stringify(result), result.generatedAt]
+  );
 }
 
-export function getSchedule(groupId: string): ScheduleResult | undefined {
-  const row = db.prepare('SELECT result_json FROM schedules WHERE group_id = ?').get(groupId) as
-    | { result_json: string }
-    | undefined;
-  return row ? (JSON.parse(row.result_json) as ScheduleResult) : undefined;
+export async function getSchedule(groupId: string): Promise<ScheduleResult | undefined> {
+  const { rows } = await pool.query<{ result_json: ScheduleResult }>(
+    'SELECT result_json FROM schedules WHERE group_id = $1',
+    [groupId]
+  );
+  return rows[0]?.result_json;
 }
 
-export function verifyMemberPassword(groupId: string, memberName: string, password: string): boolean {
-  const member = getMember(groupId, memberName);
+export async function verifyMemberPassword(groupId: string, memberName: string, password: string): Promise<boolean> {
+  const member = await getMember(groupId, memberName);
   return Boolean(member && verifyPassword(password, member.password_hash));
 }
 
-export function memberExists(groupId: string, memberName: string): boolean {
-  return Boolean(getMember(groupId, memberName));
+export async function memberExists(groupId: string, memberName: string): Promise<boolean> {
+  return Boolean(await getMember(groupId, memberName));
 }
 
 interface SwapRequestRow {
@@ -295,7 +262,7 @@ function rowToSwapRequest(row: SwapRequestRow): SwapRequest {
   };
 }
 
-export function createSwapRequest(
+export async function createSwapRequest(
   groupId: string,
   input: {
     fromMember: string;
@@ -306,42 +273,139 @@ export function createSwapRequest(
     toEnd: string | null;
     message: string | null;
   }
-): SwapRequest {
-  const info = db
-    .prepare(
-      `INSERT INTO swap_requests (group_id, from_member, to_member, from_start, from_end, to_start, to_end, message)
-       VALUES (@groupId, @fromMember, @toMember, @fromStart, @fromEnd, @toStart, @toEnd, @message)`
-    )
-    .run({ groupId, ...input });
+): Promise<SwapRequest> {
+  const { rows } = await pool.query<{ id: number }>(
+    `INSERT INTO swap_requests (group_id, from_member, to_member, from_start, from_end, to_start, to_end, message, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     RETURNING id`,
+    [
+      groupId,
+      input.fromMember,
+      input.toMember,
+      input.fromStart,
+      input.fromEnd,
+      input.toStart,
+      input.toEnd,
+      input.message,
+      new Date().toISOString(),
+    ]
+  );
 
-  return getSwapRequest(groupId, info.lastInsertRowid as number)!;
+  return (await getSwapRequest(groupId, rows[0].id))!;
 }
 
-export function getSwapRequest(groupId: string, id: number): SwapRequest | undefined {
-  const row = db
-    .prepare('SELECT * FROM swap_requests WHERE id = ? AND group_id = ?')
-    .get(id, groupId) as SwapRequestRow | undefined;
-  return row ? rowToSwapRequest(row) : undefined;
+export async function getSwapRequest(groupId: string, id: number): Promise<SwapRequest | undefined> {
+  const { rows } = await pool.query<SwapRequestRow>(
+    'SELECT * FROM swap_requests WHERE id = $1 AND group_id = $2',
+    [id, groupId]
+  );
+  return rows[0] ? rowToSwapRequest(rows[0]) : undefined;
 }
 
-export function getSwapRequestsForMember(
+export async function getSwapRequestsForMember(
   groupId: string,
   memberName: string
-): { incoming: SwapRequest[]; outgoing: SwapRequest[] } {
-  const rows = db
-    .prepare(
-      `SELECT * FROM swap_requests WHERE group_id = ? AND (from_member = ? OR to_member = ?)
-       ORDER BY created_at DESC`
-    )
-    .all(groupId, memberName, memberName) as SwapRequestRow[];
+): Promise<{ incoming: SwapRequest[]; outgoing: SwapRequest[] }> {
+  const { rows } = await pool.query<SwapRequestRow>(
+    `SELECT * FROM swap_requests WHERE group_id = $1 AND (from_member = $2 OR to_member = $2)
+     ORDER BY created_at DESC`,
+    [groupId, memberName]
+  );
 
-  const incoming = rows.filter((r) => r.to_member === memberName).map(rowToSwapRequest);
-  const outgoing = rows.filter((r) => r.from_member === memberName).map(rowToSwapRequest);
+  const all = rows.map(rowToSwapRequest);
+  const incoming = all.filter((r) => r.toMember === memberName);
+  const outgoing = all.filter((r) => r.fromMember === memberName);
   return { incoming, outgoing };
 }
 
-export function setSwapRequestStatus(groupId: string, id: number, status: SwapStatus): void {
-  db.prepare(
-    `UPDATE swap_requests SET status = @status, responded_at = @respondedAt WHERE id = @id AND group_id = @groupId`
-  ).run({ id, groupId, status, respondedAt: new Date().toISOString() });
+export async function setSwapRequestStatus(groupId: string, id: number, status: SwapStatus): Promise<void> {
+  await pool.query(
+    'UPDATE swap_requests SET status = $1, responded_at = $2 WHERE id = $3 AND group_id = $4',
+    [status, new Date().toISOString(), id, groupId]
+  );
+}
+
+export type AcceptSwapRequestResult =
+  | { status: 'ok'; schedule: ScheduleResult; swapRequest: SwapRequest }
+  | { status: 'not_found' }
+  | { status: 'forbidden' }
+  | { status: 'no_schedule' }
+  | { status: 'conflict'; message: string };
+
+// Accepting a swap touches both the schedule and the swap-request row, and
+// two members could respond to overlapping swaps at the same instant.
+// Locking both rows (FOR UPDATE) inside one transaction means a concurrent
+// second attempt blocks until the first commits, then correctly re-reads
+// the now-updated status/schedule instead of racing a lost update.
+export async function acceptSwapRequest(
+  groupId: string,
+  id: number,
+  memberName: string,
+  compute: (
+    schedule: ScheduleResult,
+    swapRequest: SwapRequest
+  ) => { ok: true; schedule: ScheduleResult } | { ok: false; error: string }
+): Promise<AcceptSwapRequestResult> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const swapRow = await client.query<SwapRequestRow>(
+      'SELECT * FROM swap_requests WHERE id = $1 AND group_id = $2 FOR UPDATE',
+      [id, groupId]
+    );
+    if (swapRow.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return { status: 'not_found' };
+    }
+    const swapRequest = rowToSwapRequest(swapRow.rows[0]);
+
+    if (swapRequest.toMember !== memberName) {
+      await client.query('ROLLBACK');
+      return { status: 'forbidden' };
+    }
+    if (swapRequest.status !== 'pending') {
+      await client.query('ROLLBACK');
+      return { status: 'conflict', message: 'This request has already been responded to' };
+    }
+
+    const scheduleRow = await client.query<{ result_json: ScheduleResult }>(
+      'SELECT result_json FROM schedules WHERE group_id = $1 FOR UPDATE',
+      [groupId]
+    );
+    if (scheduleRow.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return { status: 'no_schedule' };
+    }
+
+    const result = compute(scheduleRow.rows[0].result_json, swapRequest);
+    if (!result.ok) {
+      await client.query('ROLLBACK');
+      return { status: 'conflict', message: result.error };
+    }
+
+    const respondedAt = new Date().toISOString();
+    await client.query('UPDATE schedules SET result_json = $1, generated_at = $2 WHERE group_id = $3', [
+      JSON.stringify(result.schedule),
+      result.schedule.generatedAt,
+      groupId,
+    ]);
+    await client.query(`UPDATE swap_requests SET status = 'accepted', responded_at = $1 WHERE id = $2 AND group_id = $3`, [
+      respondedAt,
+      id,
+      groupId,
+    ]);
+
+    await client.query('COMMIT');
+    return {
+      status: 'ok',
+      schedule: result.schedule,
+      swapRequest: { ...swapRequest, status: 'accepted', respondedAt },
+    };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
