@@ -6,6 +6,12 @@ import type {
   SwapRequest,
 } from './types';
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
+
+function apiUrl(path: string): string {
+  return `${API_BASE}${path}`;
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -23,7 +29,7 @@ async function parseOrThrow<T>(response: Response): Promise<T> {
 }
 
 export async function createGroup(payload: CreateGroupPayload): Promise<{ uuid: string }> {
-  const response = await fetch('/api/groups', {
+  const response = await fetch(apiUrl('/api/groups'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -32,7 +38,7 @@ export async function createGroup(payload: CreateGroupPayload): Promise<{ uuid: 
 }
 
 export async function getGroup(uuid: string): Promise<GroupConfig> {
-  const response = await fetch(`/api/groups/${uuid}`);
+  const response = await fetch(apiUrl(`/api/groups/${uuid}`));
   return parseOrThrow(response);
 }
 
@@ -41,7 +47,7 @@ export async function loginMember(
   memberName: string,
   password: string
 ): Promise<{ memberName: string; availability: AvailabilityMap; updatedAt: string } | null> {
-  const response = await fetch(`/api/groups/${uuid}/members/${encodeURIComponent(memberName)}/login`, {
+  const response = await fetch(apiUrl(`/api/groups/${uuid}/members/${encodeURIComponent(memberName)}/login`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ password }),
@@ -56,7 +62,7 @@ export async function saveMemberAvailability(
   availability: AvailabilityMap,
   password: string
 ): Promise<{ memberName: string; updatedAt: string; created: boolean }> {
-  const response = await fetch(`/api/groups/${uuid}/members/${encodeURIComponent(memberName)}`, {
+  const response = await fetch(apiUrl(`/api/groups/${uuid}/members/${encodeURIComponent(memberName)}`), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ availability, password }),
@@ -68,7 +74,7 @@ export async function generateSchedule(
   uuid: string,
   adminPassword: string | null
 ): Promise<ScheduleResult> {
-  const response = await fetch(`/api/groups/${uuid}/schedule/generate`, {
+  const response = await fetch(apiUrl(`/api/groups/${uuid}/schedule/generate`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ adminPassword }),
@@ -80,7 +86,7 @@ export async function viewSchedule(
   uuid: string,
   adminPassword: string | null
 ): Promise<ScheduleResult> {
-  const response = await fetch(`/api/groups/${uuid}/schedule/view`, {
+  const response = await fetch(apiUrl(`/api/groups/${uuid}/schedule/view`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ adminPassword }),
@@ -93,7 +99,7 @@ export async function viewScheduleAsMember(
   memberName: string,
   password: string
 ): Promise<ScheduleResult> {
-  const response = await fetch(`/api/groups/${uuid}/schedule/view-as-member`, {
+  const response = await fetch(apiUrl(`/api/groups/${uuid}/schedule/view-as-member`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ memberName, password }),
@@ -113,7 +119,7 @@ export interface CreateSwapRequestPayload {
 }
 
 export async function createSwapRequest(uuid: string, payload: CreateSwapRequestPayload): Promise<SwapRequest> {
-  const response = await fetch(`/api/groups/${uuid}/swap-requests`, {
+  const response = await fetch(apiUrl(`/api/groups/${uuid}/swap-requests`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -126,7 +132,7 @@ export async function listSwapRequests(
   memberName: string,
   password: string
 ): Promise<{ incoming: SwapRequest[]; outgoing: SwapRequest[] }> {
-  const response = await fetch(`/api/groups/${uuid}/swap-requests/list`, {
+  const response = await fetch(apiUrl(`/api/groups/${uuid}/swap-requests/list`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ memberName, password }),
@@ -141,7 +147,7 @@ export async function respondToSwapRequest(
   password: string,
   accept: boolean
 ): Promise<{ swapRequest: SwapRequest; schedule?: ScheduleResult }> {
-  const response = await fetch(`/api/groups/${uuid}/swap-requests/${id}/respond`, {
+  const response = await fetch(apiUrl(`/api/groups/${uuid}/swap-requests/${id}/respond`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ memberName, password, accept }),
