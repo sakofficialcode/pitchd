@@ -9,10 +9,14 @@ import { auburnTentingConfig, auburnTentingMembers } from './fixtures/auburn-ten
 // Rather than hand-computing the exact expected schedule for 12 people over 2.5 days, this
 // checks the invariants generateSchedule must uphold against real, messy availability data.
 
+// Assignment timestamps are UTC-anchored wall clock (see scheduler.ts's
+// parseWallClock), so re-deriving the availability-map key they came from
+// must read UTC fields too — local getters would shift by the test
+// runner's own timezone offset.
 function slotKey(d: Date): string {
   const dateStr =
-    d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-  return `${dateStr}-${d.getHours() * 60 + d.getMinutes()}`;
+    d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
+  return `${dateStr}-${d.getUTCHours() * 60 + d.getUTCMinutes()}`;
 }
 
 test('real-world fixture: tenting sign-up schedule respects recorded availability and shift rules', () => {

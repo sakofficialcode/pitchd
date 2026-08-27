@@ -1,5 +1,10 @@
+// Shift/swap timestamps are UTC-anchored wall clock (see server/scheduler.ts's
+// parseWallClock) — always formatted in UTC here rather than the viewer's
+// browser timezone, so every member sees the same wall-clock hours the
+// group's shift times were configured with, regardless of where they are.
 export function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString([], {
+    timeZone: 'UTC',
     weekday: 'short',
     month: 'short',
     day: 'numeric',

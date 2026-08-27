@@ -13,21 +13,32 @@ const MIN_GAP_MINUTES = 30;
 
 function toDateStr(d: Date): string {
   return (
-    d.getFullYear() +
+    d.getUTCFullYear() +
     '-' +
-    String(d.getMonth() + 1).padStart(2, '0') +
+    String(d.getUTCMonth() + 1).padStart(2, '0') +
     '-' +
-    String(d.getDate()).padStart(2, '0')
+    String(d.getUTCDate()).padStart(2, '0')
   );
 }
 
 function slotKey(d: Date): string {
-  const minutes = d.getHours() * 60 + d.getMinutes();
+  const minutes = d.getUTCHours() * 60 + d.getUTCMinutes();
   return `${toDateStr(d)}-${minutes}`;
 }
 
 function addMinutes(d: Date, minutes: number): Date {
   return new Date(d.getTime() + minutes * 60_000);
+}
+
+// shiftStart/shiftEnd are naive "YYYY-MM-DDTHH:mm" strings with no timezone
+// (from a <input type="datetime-local">) — they're wall-clock digits with no
+// real-world zone attached. Parsing them as UTC (rather than `new Date(s)`,
+// which resolves against whatever timezone the server process happens to
+// run in) makes those digits round-trip unchanged through the generated
+// ISO timestamps, so every viewer sees the same wall-clock hours regardless
+// of the server's or their own browser's timezone.
+function parseWallClock(s: string): Date {
+  return new Date(`${s}:00.000Z`);
 }
 
 // Legacy saved data may still hold a raw boolean (`true` = unavailable);
@@ -44,7 +55,7 @@ export function isNightSlot(
   nightShiftStart: number,
   nightShiftEnd: number
 ): boolean {
-  const hour = slotStart.getHours() + slotStart.getMinutes() / 60;
+  const hour = slotStart.getUTCHours() + slotStart.getUTCMinutes() / 60;
   return nightShiftStart <= nightShiftEnd
     ? hour >= nightShiftStart && hour < nightShiftEnd
     : hour >= nightShiftStart || hour < nightShiftEnd;
@@ -68,8 +79,8 @@ export function generateSchedule(
   const minGapSlots = Math.ceil(MIN_GAP_MINUTES / granularity);
   const minGapMinutes = minGapSlots * granularity;
 
-  const start = new Date(config.shiftStart);
-  const end = new Date(config.shiftEnd);
+  const start = parseWallClock(config.shiftStart);
+  const end = parseWallClock(config.shiftEnd);
 
   const states = new Map<string, MemberState>(
     members.map((m) => [
@@ -190,23 +201,28 @@ export function generateSchedule(
         return a.memberName.localeCompare(b.memberName);
       };
 
-      // The rest gap is a preference, not a rule: fully-rested members are
-      // always tried first, but someone still "owed" rest is used as a
-      // fallback rather than leaving the slot understaffed.
-      const tier = (pool: MemberState[]) => {
-        const rested = pool.filter((s) => s.cooldownUntil === null || s.cooldownUntil <= slotStart).sort(byLoad);
-        const resting = pool.filter((s) => s.cooldownUntil !== null && s.cooldownUntil > slotStart).sort(byLoad);
-        return [...rested, ...resting];
+      const isPreferred = (s: MemberState) => statusByName.get(s.memberName) === 'available';
+
+      // Splits a rest tier by preference — preferred members tried first,
+      // not-preferred ones pulled in only as a fallback within that same
+      // tier — so preference never gets to hop over the rest tier below.
+      const byPreference = (pool: MemberState[]) => {
+        const preferred = pool.filter(isPreferred).sort(byLoad);
+        const notPreferred = pool.filter((s) => !isPreferred(s)).sort(byLoad);
+        return [...preferred, ...notPreferred];
       };
 
-      // "Not preferred" is likewise a preference, not a rule: available
-      // members are tried first entirely, not-preferred members are only
-      // pulled in as a fallback rather than leaving the slot understaffed.
-      const isPreferred = (s: MemberState) => statusByName.get(s.memberName) === 'available';
-      const preferred = eligible.filter(isPreferred);
-      const notPreferred = eligible.filter((s) => !isPreferred(s));
+      // Rest is the dominant axis, preference the tiebreak within it: a
+      // fully-rested not-preferred member is tried before a preferred member
+      // who's still owed rest. Otherwise a member marked not-preferred for a
+      // window could be frozen out of the whole schedule by someone merely
+      // "available" who's cycling in and out of the same slots on cooldown.
+      // Resting candidates (of either preference) are used only as a last
+      // resort, once every rested candidate is gone.
+      const rested = eligible.filter((s) => s.cooldownUntil === null || s.cooldownUntil <= slotStart);
+      const resting = eligible.filter((s) => s.cooldownUntil !== null && s.cooldownUntil > slotStart);
 
-      newlyStarted = [...tier(preferred), ...tier(notPreferred)].slice(0, needed);
+      newlyStarted = [...byPreference(rested), ...byPreference(resting)].slice(0, needed);
     }
 
     for (const state of kept) {

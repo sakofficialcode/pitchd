@@ -3,6 +3,14 @@ import assert from 'node:assert/strict';
 import { generateSchedule, isNightSlot } from './scheduler.ts';
 import type { GroupConfig, MemberAvailability } from './types.ts';
 
+// shiftStart/shiftEnd are naive wall-clock strings parsed as UTC by
+// scheduler.ts (see parseWallClock) — expected assignment timestamps must be
+// built the same way, rather than `new Date(naiveString).toISOString()`,
+// which resolves against the test runner's own local timezone.
+function utc(wallClock: string): string {
+  return new Date(`${wallClock}:00.000Z`).toISOString();
+}
+
 function baseConfig(overrides: Partial<GroupConfig>): GroupConfig {
   return {
     uuid: 'test-group',
@@ -34,12 +42,12 @@ test('sole coverage: rest is waived rather than leaving a gap when no one else i
   const result = generateSchedule(config, members);
 
   assert.equal(result.assignments.length, 3);
-  assert.equal(result.assignments[0].start, new Date('2026-01-01T00:00').toISOString());
-  assert.equal(result.assignments[0].end, new Date('2026-01-01T03:00').toISOString());
-  assert.equal(result.assignments[1].start, new Date('2026-01-01T03:00').toISOString());
-  assert.equal(result.assignments[1].end, new Date('2026-01-01T06:00').toISOString());
-  assert.equal(result.assignments[2].start, new Date('2026-01-01T06:00').toISOString());
-  assert.equal(result.assignments[2].end, new Date('2026-01-01T07:00').toISOString());
+  assert.equal(result.assignments[0].start, utc('2026-01-01T00:00'));
+  assert.equal(result.assignments[0].end, utc('2026-01-01T03:00'));
+  assert.equal(result.assignments[1].start, utc('2026-01-01T03:00'));
+  assert.equal(result.assignments[1].end, utc('2026-01-01T06:00'));
+  assert.equal(result.assignments[2].start, utc('2026-01-01T06:00'));
+  assert.equal(result.assignments[2].end, utc('2026-01-01T07:00'));
 
   assert.equal(result.understaffed.length, 0);
 });
@@ -64,12 +72,12 @@ test('rest is still preferred when someone else can cover the slot', () => {
   const byName = (name: string) => result.assignments.filter((a) => a.memberName === name);
 
   assert.equal(byName('X').length, 1);
-  assert.equal(byName('X')[0].start, new Date('2026-01-01T00:00').toISOString());
-  assert.equal(byName('X')[0].end, new Date('2026-01-01T03:00').toISOString());
+  assert.equal(byName('X')[0].start, utc('2026-01-01T00:00'));
+  assert.equal(byName('X')[0].end, utc('2026-01-01T03:00'));
 
   assert.equal(byName('Y').length, 1);
-  assert.equal(byName('Y')[0].start, new Date('2026-01-01T03:00').toISOString());
-  assert.equal(byName('Y')[0].end, new Date('2026-01-01T04:00').toISOString());
+  assert.equal(byName('Y')[0].start, utc('2026-01-01T03:00'));
+  assert.equal(byName('Y')[0].end, utc('2026-01-01T04:00'));
 
   assert.equal(result.understaffed.length, 0);
 });
@@ -101,12 +109,12 @@ test('night/day boundary: headcount drops and night is one unbroken block past t
   // rest of the window uninterrupted, and B never resumes since the night only needs one
   // person the whole time.
   assert.equal(aShifts.length, 1);
-  assert.equal(aShifts[0].start, new Date('2026-01-01T20:00').toISOString());
-  assert.equal(aShifts[0].end, new Date('2026-01-02T02:00').toISOString());
+  assert.equal(aShifts[0].start, utc('2026-01-01T20:00'));
+  assert.equal(aShifts[0].end, utc('2026-01-02T02:00'));
 
   assert.equal(bShifts.length, 1);
-  assert.equal(bShifts[0].start, new Date('2026-01-01T20:00').toISOString());
-  assert.equal(bShifts[0].end, new Date('2026-01-01T22:00').toISOString());
+  assert.equal(bShifts[0].start, utc('2026-01-01T20:00'));
+  assert.equal(bShifts[0].end, utc('2026-01-01T22:00'));
 
   assert.equal(result.understaffed.length, 0);
 });
@@ -135,16 +143,16 @@ test('headcount-drop trim keeps the longest-running shifts', () => {
   const byName = (name: string) => result.assignments.filter((a) => a.memberName === name);
 
   assert.equal(byName('C1').length, 1);
-  assert.equal(byName('C1')[0].start, new Date('2026-01-01T18:00').toISOString());
-  assert.equal(byName('C1')[0].end, new Date('2026-01-01T20:00').toISOString());
+  assert.equal(byName('C1')[0].start, utc('2026-01-01T18:00'));
+  assert.equal(byName('C1')[0].end, utc('2026-01-01T20:00'));
 
   assert.equal(byName('C2').length, 1);
-  assert.equal(byName('C2')[0].start, new Date('2026-01-01T18:30').toISOString());
-  assert.equal(byName('C2')[0].end, new Date('2026-01-01T19:30').toISOString());
+  assert.equal(byName('C2')[0].start, utc('2026-01-01T18:30'));
+  assert.equal(byName('C2')[0].end, utc('2026-01-01T19:30'));
 
   assert.equal(byName('C3').length, 1);
-  assert.equal(byName('C3')[0].start, new Date('2026-01-01T19:00').toISOString());
-  assert.equal(byName('C3')[0].end, new Date('2026-01-01T19:30').toISOString());
+  assert.equal(byName('C3')[0].start, utc('2026-01-01T19:00'));
+  assert.equal(byName('C3')[0].end, utc('2026-01-01T19:30'));
 });
 
 test('understaffed detection when required headcount cannot be met', () => {
@@ -239,18 +247,18 @@ test('workload fairness: least-total-time-worked wins over alphabetical order on
   const byName = (name: string) => result.assignments.filter((a) => a.memberName === name);
 
   assert.equal(byName('Bob').length, 2);
-  assert.equal(byName('Bob')[0].start, new Date('2026-01-01T00:00').toISOString());
-  assert.equal(byName('Bob')[0].end, new Date('2026-01-01T01:00').toISOString());
-  assert.equal(byName('Bob')[1].start, new Date('2026-01-01T05:00').toISOString());
-  assert.equal(byName('Bob')[1].end, new Date('2026-01-01T06:00').toISOString());
+  assert.equal(byName('Bob')[0].start, utc('2026-01-01T00:00'));
+  assert.equal(byName('Bob')[0].end, utc('2026-01-01T01:00'));
+  assert.equal(byName('Bob')[1].start, utc('2026-01-01T05:00'));
+  assert.equal(byName('Bob')[1].end, utc('2026-01-01T06:00'));
 
   assert.equal(byName('Alice').length, 1);
-  assert.equal(byName('Alice')[0].start, new Date('2026-01-01T01:00').toISOString());
-  assert.equal(byName('Alice')[0].end, new Date('2026-01-01T04:00').toISOString());
+  assert.equal(byName('Alice')[0].start, utc('2026-01-01T01:00'));
+  assert.equal(byName('Alice')[0].end, utc('2026-01-01T04:00'));
 
   assert.equal(result.understaffed.length, 1);
-  assert.equal(result.understaffed[0].start, new Date('2026-01-01T04:00').toISOString());
-  assert.equal(result.understaffed[0].end, new Date('2026-01-01T05:00').toISOString());
+  assert.equal(result.understaffed[0].start, utc('2026-01-01T04:00'));
+  assert.equal(result.understaffed[0].end, utc('2026-01-01T05:00'));
 });
 
 test('shift-start tiebreak: equally-loaded candidate who can stay longer is preferred over one who hands off almost immediately', () => {
@@ -279,13 +287,13 @@ test('shift-start tiebreak: equally-loaded candidate who can stay longer is pref
 
   assert.equal(result.assignments.length, 1);
   assert.equal(result.assignments[0].memberName, 'Tommy');
-  assert.equal(result.assignments[0].start, new Date('2026-01-01T06:30').toISOString());
-  assert.equal(result.assignments[0].end, new Date('2026-01-01T08:00').toISOString());
+  assert.equal(result.assignments[0].start, utc('2026-01-01T06:30'));
+  assert.equal(result.assignments[0].end, utc('2026-01-01T08:00'));
   assert.equal(result.understaffed.length, 0);
 });
 
 test('night-window wraparound classification (22 -> 6)', () => {
-  const hour = (h: number) => new Date(2026, 0, 1, h, 0);
+  const hour = (h: number) => new Date(Date.UTC(2026, 0, 1, h, 0));
   assert.equal(isNightSlot(hour(23), 22, 6), true);
   assert.equal(isNightSlot(hour(2), 22, 6), true);
   assert.equal(isNightSlot(hour(12), 22, 6), false);

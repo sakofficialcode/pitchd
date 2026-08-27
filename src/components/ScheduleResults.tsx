@@ -5,8 +5,28 @@ import { getMemberColor, UNDERSTAFFED_COLOR } from '../lib/colors';
 const HOUR_HEIGHT_PX = 48;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// `result.generatedAt` is a real point in time (when the algorithm ran), so
+// it's shown in the viewer's own local timezone — unlike shift/swap
+// boundaries below, which are UTC-anchored wall clock and must render
+// identically for every viewer (see formatShiftDateTime).
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString([], {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+// Shift/swap timestamps (assignment and understaffed ranges, swap-proposal
+// selections) are UTC-anchored wall clock — see server/scheduler.ts's
+// parseWallClock. Formatting them in UTC (rather than the viewer's browser
+// timezone) means every member sees the same wall-clock hours the shift was
+// configured with, regardless of where they are.
+function formatShiftDateTime(iso: string): string {
+  return new Date(iso).toLocaleString([], {
+    timeZone: 'UTC',
     weekday: 'short',
     month: 'short',
     day: 'numeric',
@@ -23,14 +43,18 @@ function formatTimeOfDay(minutes: number): string {
   return m === 0 ? `${displayHour} ${period}` : `${displayHour}:${m.toString().padStart(2, '0')} ${period}`;
 }
 
+// Assignment/understaffed timestamps are UTC-anchored wall clock (see
+// server/scheduler.ts's parseWallClock), so day boundaries and calendar keys
+// must be read/written in UTC too — local getters would shift which
+// calendar day a slot lands on by the viewer's own timezone offset.
 function startOfDay(d: Date): Date {
   const copy = new Date(d);
-  copy.setHours(0, 0, 0, 0);
+  copy.setUTCHours(0, 0, 0, 0);
   return copy;
 }
 
 function dateKey(d: Date): string {
-  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
 }
 
 function formatHours(minutes: number): string {
@@ -48,19 +72,19 @@ function initials(name: string): string {
 }
 
 // Absolute time for the start of the slot `minuteOfDay` minutes into
-// `dayDate` (a local midnight). Using setMinutes (rather than raw
+// `dayDate` (a UTC midnight). Using setUTCMinutes (rather than raw
 // millisecond math) lets JS handle any hour/day rollover for us, the same
-// way WeekScheduler's own day-arithmetic does.
+// way WeekScheduler's own day-arithmetic does — just anchored to UTC
+// instead of the browser's local zone, to match the UTC-anchored wall clock
+// assignment timestamps are built from.
 function cellTime(dayDate: Date, minuteOfDay: number): string {
   const d = new Date(dayDate);
-  d.setMinutes(minuteOfDay);
+  d.setUTCMinutes(minuteOfDay);
   return d.toISOString();
 }
 
 function addMinutesIso(iso: string, minutes: number): string {
-  const d = new Date(iso);
-  d.setMinutes(d.getMinutes() + minutes);
-  return d.toISOString();
+  return new Date(new Date(iso).getTime() + minutes * 60_000).toISOString();
 }
 
 interface DaySegment {
@@ -238,7 +262,7 @@ export default function ScheduleResults({ result, interactive, previewRequest }:
     const sortedKeys = [...dayKeys].sort();
     const days = sortedKeys.map((key) => {
       const [y, m, d] = key.split('-').map(Number);
-      return { key, date: new Date(y, m - 1, d) };
+      return { key, date: new Date(Date.UTC(y, m - 1, d)) };
     });
 
     const understaffedByDay = new Map<string, Array<{ startMin: number; endMin: number; range: UnderstaffedRange }>>();
@@ -545,7 +569,7 @@ export default function ScheduleResults({ result, interactive, previewRequest }:
                 <div>
                   <p className="text-xs text-gray-500">Give away</p>
                   <p className="text-sm font-medium text-gray-900">
-                    {formatDateTime(selections.from.start)} &ndash; {formatDateTime(selections.from.end)}
+                    {formatShiftDateTime(selections.from.start)} &ndash; {formatShiftDateTime(selections.from.end)}
                   </p>
                 </div>
 
@@ -607,7 +631,7 @@ export default function ScheduleResults({ result, interactive, previewRequest }:
               {proposal.includeReciprocal && (
                 <p className="text-xs text-gray-600">
                   {selections.to
-                    ? `In return for ${formatDateTime(selections.to.start)} – ${formatDateTime(selections.to.end)}`
+                    ? `In return for ${formatShiftDateTime(selections.to.start)} – ${formatShiftDateTime(selections.to.end)}`
                     : proposal.toMember
                       ? `Click one of ${proposal.toMember}'s shifts on the calendar`
                       : 'Pick a member first'}
@@ -665,10 +689,10 @@ export default function ScheduleResults({ result, interactive, previewRequest }:
                   <div key={day.key} className="flex-1 min-w-[140px] border-r border-gray-200 last:border-r-0">
                     <div className="h-12 border-b border-gray-200 flex flex-col items-center justify-center">
                       <span className="text-xs font-semibold text-gray-700">
-                        {day.date.toLocaleDateString([], { weekday: 'short' })}
+                        {day.date.toLocaleDateString([], { timeZone: 'UTC', weekday: 'short' })}
                       </span>
                       <span className="text-[10px] text-gray-500">
-                        {day.date.toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                        {day.date.toLocaleDateString([], { timeZone: 'UTC', month: 'short', day: 'numeric' })}
                       </span>
                     </div>
                     <div className="relative" style={{ height: `${containerHeight}px` }}>
@@ -845,8 +869,8 @@ export default function ScheduleResults({ result, interactive, previewRequest }:
               <tbody>
                 {result.understaffed.map((range, idx) => (
                   <tr key={idx} className="border-t border-red-200">
-                    <td className="px-4 py-2 text-red-800">{formatDateTime(range.start)}</td>
-                    <td className="px-4 py-2 text-red-800">{formatDateTime(range.end)}</td>
+                    <td className="px-4 py-2 text-red-800">{formatShiftDateTime(range.start)}</td>
+                    <td className="px-4 py-2 text-red-800">{formatShiftDateTime(range.end)}</td>
                     <td className="px-4 py-2 text-red-800">{range.required}</td>
                     <td className="px-4 py-2 text-red-800">{range.filled}</td>
                   </tr>
