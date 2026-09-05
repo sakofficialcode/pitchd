@@ -157,9 +157,8 @@ router.post('/groups/:uuid/schedule/view', async (req, res) => {
   res.json(result);
 });
 
-// Members authenticate with their own name+password (not the admin
-// password) to view the schedule — anyone with the group link but no
-// account still can't see it.
+// Members view the schedule with their own name+password, not the admin
+// password — the group link alone isn't enough.
 router.post('/groups/:uuid/schedule/view-as-member', async (req, res) => {
   const group = await getGroup(req.params.uuid);
   if (!group) {
@@ -334,10 +333,8 @@ router.post('/groups/:uuid/swap-requests/:id/respond', async (req, res) => {
     return;
   }
 
-  // acceptSwapRequest locks the swap-request and schedule rows for the
-  // duration of this transaction, so a concurrent second response to the
-  // same or an overlapping swap can't race the read-modify-write below —
-  // it blocks on the lock and then correctly sees the up-to-date status.
+  // acceptSwapRequest locks both rows for the transaction, so this
+  // read-modify-write can't race a concurrent response.
   const outcome = await acceptSwapRequest(req.params.uuid, id, memberName, (schedule, swap) => {
     const result = applySwap(schedule.assignments, {
       fromMember: swap.fromMember,

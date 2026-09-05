@@ -38,9 +38,8 @@ export default function GroupPage() {
     if (savedName) setMemberName(savedName);
   }, [uuid]);
 
-  // Checks the name+password pair against the server. A name with no
-  // account yet is reported as such (so the scheduler can be used to create
-  // one on submit) rather than silently exposing someone else's data.
+  // A name with no account yet is reported as such, so the scheduler can create
+  // one on submit rather than silently exposing someone else's data.
   const attemptLogin = async (name: string, password: string) => {
     const trimmed = name.trim();
     if (!trimmed || !password) return;

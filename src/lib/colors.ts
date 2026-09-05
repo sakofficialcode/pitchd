@@ -1,8 +1,5 @@
-// Shared categorical palette for mapping people to colors across the app
-// (calendar shift blocks, legends, etc.). Based on IBM Carbon's data-viz
-// categorical set, chosen because adjacent entries stay visually distinct
-// even for colorblind viewers — unlike an arbitrary hand-picked list where
-// neighboring hues (e.g. orange/red/magenta) can look nearly identical.
+// IBM Carbon's data-viz categorical set: adjacent entries stay distinct even
+// for colorblind viewers, unlike a hand-picked list of neighboring hues.
 const BASE_PALETTE = [
   '#6929c4', // purple
   '#1192e8', // blue
@@ -22,10 +19,8 @@ const BASE_PALETTE = [
 
 const GOLDEN_ANGLE = 137.508;
 
-// Assigns a color for the nth person (stable, index-based). Groups within
-// the curated palette size get maximally-distinct hand-picked colors; any
-// member beyond that gets a generated hue spaced by the golden angle so
-// colors keep spreading out instead of repeating.
+// Stable index-based color. Past the curated palette, hues are spaced by the
+// golden angle so they keep spreading out instead of repeating.
 export function getMemberColor(index: number): string {
   if (index < BASE_PALETTE.length) return BASE_PALETTE[index];
   const overflow = index - BASE_PALETTE.length;
@@ -36,7 +31,6 @@ export function getMemberColor(index: number): string {
 
 export const MEMBER_COLORS = BASE_PALETTE;
 
-// Used for "understaffed" hatching, not tied to any one person — kept
-// visually distinct via a diagonal-stripe pattern rather than relying on
-// hue alone to avoid clashing with a member's assigned color.
+// Understaffed hatching. Drawn as diagonal stripes rather than relying on hue
+// alone, since it can land next to a member's assigned color.
 export const UNDERSTAFFED_COLOR = '#d03b3b';

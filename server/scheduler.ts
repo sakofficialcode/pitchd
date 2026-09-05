@@ -30,13 +30,11 @@ function addMinutes(d: Date, minutes: number): Date {
   return new Date(d.getTime() + minutes * 60_000);
 }
 
-// shiftStart/shiftEnd are naive "YYYY-MM-DDTHH:mm" strings with no timezone
-// (from a <input type="datetime-local">) — they're wall-clock digits with no
-// real-world zone attached. Parsing them as UTC (rather than `new Date(s)`,
-// which resolves against whatever timezone the server process happens to
-// run in) makes those digits round-trip unchanged through the generated
-// ISO timestamps, so every viewer sees the same wall-clock hours regardless
-// of the server's or their own browser's timezone.
+// shiftStart/shiftEnd are naive "YYYY-MM-DDTHH:mm" strings (from an
+// <input type="datetime-local">) with no zone attached. Parsing them as UTC —
+// rather than `new Date(s)`, which resolves against the server's own timezone —
+// makes the wall-clock digits round-trip unchanged into the generated ISO
+// timestamps, so every viewer sees the same hours. All rendering follows suit.
 function parseWallClock(s: string): Date {
   return new Date(`${s}:00.000Z`);
 }
@@ -97,11 +95,9 @@ export function generateSchedule(
   );
   const availabilityByName = new Map(members.map((m) => [m.memberName, m.availability]));
 
-  // How many consecutive slots (from `fromSlot`, capped at one shift's worth)
-  // a member stays workable before hitting an 'unavailable' slot. Used to
-  // break ties between equally-loaded candidates so a shift doesn't start
-  // with whoever runs out of availability soonest, forcing a handoff a
-  // fellow member could've avoided by just starting the shift themselves.
+  // Consecutive workable slots from `fromSlot` (capped at one shift's worth).
+  // Breaks load ties so a shift doesn't start with whoever runs out of
+  // availability soonest, forcing a handoff someone else could have avoided.
   const workableAheadCount = (memberName: string, fromSlot: Date): number => {
     const availability = availabilityByName.get(memberName)!;
     let count = 0;
@@ -145,9 +141,8 @@ export function generateSchedule(
       isNightSlot(slotStart, config.nightShiftStart, config.nightShiftEnd);
 
     const required = isNight ? config.nightOnShift ?? config.stdOnShift : config.stdOnShift;
-    // Night hours are all-or-nothing: once someone is on a night shift, the
-    // normal max-shift-length cap doesn't apply — they cover the whole
-    // window rather than being capped and handed off mid-night.
+    // Night hours are all-or-nothing: the max-shift cap doesn't apply, so
+    // whoever is on covers the whole window instead of handing off mid-night.
     const effectiveMaxSlots = isNight ? Infinity : maxSlotsPerShift;
 
     const statusByName = new Map(
@@ -158,12 +153,10 @@ export function generateSchedule(
       [...statusByName.entries()].filter(([, status]) => status !== 'unavailable').map(([name]) => name)
     );
 
-    // Continuers: currently open, workable this slot, under the shift cap.
     const continuers = [...states.values()].filter(
       (s) => s.openStart !== null && workableNames.has(s.memberName) && s.slotsElapsed < effectiveMaxSlots
     );
 
-    // Anyone open but not eligible to continue gets closed now.
     for (const state of states.values()) {
       if (state.openStart !== null && !continuers.includes(state)) {
         closeShift(state);
@@ -186,12 +179,10 @@ export function generateSchedule(
         (s) => s.openStart === null && workableNames.has(s.memberName) && !kept.includes(s)
       );
 
-      // Least-total-time-worked-so-far wins ties, so hours even out across
-      // the whole schedule regardless of how shift lengths vary.
+      // Least-worked-so-far first, so hours even out however shift lengths vary.
       const byLoad = (a: MemberState, b: MemberState) => {
         if (a.totalMinutesWorked !== b.totalMinutesWorked) return a.totalMinutesWorked - b.totalMinutesWorked;
-        // Equally loaded — prefer whoever can carry the shift furthest
-        // before their availability runs out, ahead of rest cooldown.
+        // Equally loaded — prefer whoever can carry the shift furthest.
         const aAhead = workableAheadCount(a.memberName, slotStart);
         const bAhead = workableAheadCount(b.memberName, slotStart);
         if (aAhead !== bAhead) return bAhead - aAhead;
@@ -203,22 +194,16 @@ export function generateSchedule(
 
       const isPreferred = (s: MemberState) => statusByName.get(s.memberName) === 'available';
 
-      // Splits a rest tier by preference — preferred members tried first,
-      // not-preferred ones pulled in only as a fallback within that same
-      // tier — so preference never gets to hop over the rest tier below.
       const byPreference = (pool: MemberState[]) => {
         const preferred = pool.filter(isPreferred).sort(byLoad);
         const notPreferred = pool.filter((s) => !isPreferred(s)).sort(byLoad);
         return [...preferred, ...notPreferred];
       };
 
-      // Rest is the dominant axis, preference the tiebreak within it: a
-      // fully-rested not-preferred member is tried before a preferred member
-      // who's still owed rest. Otherwise a member marked not-preferred for a
-      // window could be frozen out of the whole schedule by someone merely
-      // "available" who's cycling in and out of the same slots on cooldown.
-      // Resting candidates (of either preference) are used only as a last
-      // resort, once every rested candidate is gone.
+      // Rest is the dominant axis, preference only a tiebreak within it: a
+      // rested not-preferred member is tried before a preferred one still owed
+      // rest. Otherwise someone marked not-preferred for a window could be
+      // frozen out entirely by an "available" member cycling through cooldown.
       const rested = eligible.filter((s) => s.cooldownUntil === null || s.cooldownUntil <= slotStart);
       const resting = eligible.filter((s) => s.cooldownUntil !== null && s.cooldownUntil > slotStart);
 
@@ -246,7 +231,6 @@ export function generateSchedule(
     }
   }
 
-  // Close any shifts still open at the end of the range.
   for (const state of states.values()) {
     closeShift(state);
   }

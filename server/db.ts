@@ -138,9 +138,8 @@ export type MemberAuthResult =
   | { status: 'not_found' }
   | { status: 'invalid_password' };
 
-// Every member name is bound to a password set on first submission. Reading
-// someone's availability requires that password, so a stranger who simply
-// types someone else's name can't view or overwrite their data.
+// Every member name is bound to a password set on first submission, so a
+// stranger typing someone else's name can't read or overwrite their data.
 export async function authenticateMember(groupId: string, memberName: string, password: string): Promise<MemberAuthResult> {
   const existing = await getMember(groupId, memberName);
   if (!existing) return { status: 'not_found' };
@@ -163,11 +162,9 @@ export async function saveMemberAvailability(
   try {
     await client.query('BEGIN');
 
-    // Try to win the race for a brand-new member first. If two concurrent
-    // requests both attempt this for the same (groupId, memberName),
-    // Postgres serializes them on the UNIQUE index: the winner gets a row
-    // back, the loser gets zero rows (not a thrown constraint violation)
-    // and falls through to the existing-member path below.
+    // Race two concurrent first-time submissions on the UNIQUE index: the
+    // loser gets zero rows back (not a thrown constraint violation) and falls
+    // through to the existing-member path below.
     const inserted = await client.query(
       `INSERT INTO members (group_id, member_name, availability, password_hash, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $5)
@@ -332,11 +329,10 @@ export type AcceptSwapRequestResult =
   | { status: 'no_schedule' }
   | { status: 'conflict'; message: string };
 
-// Accepting a swap touches both the schedule and the swap-request row, and
-// two members could respond to overlapping swaps at the same instant.
-// Locking both rows (FOR UPDATE) inside one transaction means a concurrent
-// second attempt blocks until the first commits, then correctly re-reads
-// the now-updated status/schedule instead of racing a lost update.
+// Two members could respond to overlapping swaps at the same instant. Locking
+// both the swap-request and schedule rows (FOR UPDATE) in one transaction makes
+// the second attempt block, then re-read the updated state instead of racing a
+// lost update.
 export async function acceptSwapRequest(
   groupId: string,
   id: number,

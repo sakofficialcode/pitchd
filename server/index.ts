@@ -5,9 +5,8 @@ import { router } from './routes.ts';
 const app = express();
 const PORT = Number(process.env.PORT) || 4000;
 
-// In production this must be set to the exact frontend origin (e.g.
-// https://campout.pages.dev) — leaving it unset falls back to reflecting
-// any request origin, which is fine for local dev but not for prod.
+// Must be the exact frontend origin in production; unset reflects any origin,
+// which is fine only for local dev.
 const CORS_ORIGIN = process.env.CORS_ORIGIN;
 if (process.env.NODE_ENV === 'production' && !CORS_ORIGIN) {
   console.warn('CORS_ORIGIN is not set — allowing requests from any origin. Set it in production.');

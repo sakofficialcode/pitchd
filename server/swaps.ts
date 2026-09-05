@@ -49,11 +49,9 @@ export type ApplySwapResult =
   | { ok: true; assignments: ShiftAssignment[] }
   | { ok: false; error: string };
 
-// Hands the [fromStart, fromEnd) slice of fromMember's shift to toMember,
-// and — if a reciprocal range is given — hands toMember's [toStart, toEnd)
-// slice back to fromMember at the same time. Both carves must succeed or
-// neither is applied, so a stale/no-longer-matching request can't leave the
-// schedule half-swapped.
+// Hands fromMember's [fromStart, fromEnd) slice to toMember, and — if a
+// reciprocal range is given — toMember's slice back. Both carves must succeed
+// or neither applies, so a stale request can't leave the schedule half-swapped.
 export function applySwap(assignments: ShiftAssignment[], swap: SwapInput): ApplySwapResult {
   const afterFrom = carveRange(assignments, swap.fromMember, swap.fromStart, swap.fromEnd, swap.toMember);
   if (!afterFrom) {

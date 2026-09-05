@@ -41,9 +41,8 @@ export default function SchedulePage() {
 
   const refreshData = React.useCallback(
     async (name: string, password: string) => {
-      // Authenticate (and load requests) first — a wrong password should
-      // surface as a login error rather than the "no schedule yet" case
-      // below swallowing it.
+      // Authenticate first, so a wrong password surfaces as a login error
+      // instead of being swallowed by the "no schedule yet" case below.
       const requestResult = await listSwapRequests(uuid, name, password);
       setRequests(requestResult);
 

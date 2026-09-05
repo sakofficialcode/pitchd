@@ -1,7 +1,5 @@
 // Shift/swap timestamps are UTC-anchored wall clock (see server/scheduler.ts's
-// parseWallClock) — always formatted in UTC here rather than the viewer's
-// browser timezone, so every member sees the same wall-clock hours the
-// group's shift times were configured with, regardless of where they are.
+// parseWallClock), so every member sees the configured hours wherever they are.
 export function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString([], {
     timeZone: 'UTC',
@@ -13,9 +11,8 @@ export function formatDateTime(iso: string): string {
   });
 }
 
-// <input type="datetime-local"> works in local wall-clock time with no
-// timezone info, so round-tripping through it needs explicit local-time
-// formatting rather than toISOString (which is always UTC).
+// <input type="datetime-local"> works in local wall-clock time, so this must
+// format explicitly rather than use toISOString (always UTC).
 export function isoToLocalInput(iso: string): string {
   const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, '0');

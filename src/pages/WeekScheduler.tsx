@@ -118,7 +118,6 @@ export default function WeekScheduler({
   const tokenClientRef = useRef<ReturnType<typeof window.google.accounts.oauth2.initTokenClient> | null>(null);
   const [gisLoaded, setGisLoaded] = useState(false);
 
-  // Default to a 2-week range starting today if not provided
   const getDefaultStart = () => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -159,7 +158,6 @@ export default function WeekScheduler({
     return () => window.clearInterval(interval);
   }, []);
 
-  // --- Initialize gapi ---
   useEffect(() => {
     if (!gisLoaded) return;
     window.gapi.load('client', async () => {
@@ -183,14 +181,12 @@ export default function WeekScheduler({
 
     const fetchedEvents = response.result.items || [];
 
-    // Map events to scheduler slots
     const googleAvailability: AvailabilityMap = {};
 
     fetchedEvents.forEach((event) => {
       const eventStart = new Date(event.start!.dateTime!);
       const eventEnd = new Date(event.end!.dateTime!);
 
-      // Iterate through each day the event touches
       const dayCursor = new Date(eventStart);
       dayCursor.setHours(0, 0, 0, 0);
 
@@ -202,7 +198,6 @@ export default function WeekScheduler({
           '-' +
           String(dayCursor.getDate()).padStart(2, '0');
 
-        // Iterate through every slot in that day
         for (let minutes = 0; minutes < 1440; minutes += slotMinutes) {
           const slotStart = new Date(
             dayCursor.getFullYear(),
@@ -231,7 +226,6 @@ export default function WeekScheduler({
     setAvailability((prev) => ({ ...prev, ...googleAvailability }));
   };
 
-  // Update when props change
   useEffect(() => {
     if (initialAvailability && Object.keys(initialAvailability).length > 0) {
       setAvailability(initialAvailability);
@@ -290,7 +284,6 @@ export default function WeekScheduler({
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
     for (let i = 0; i < 7; i++) {
-      // always 7 days
       const date = new Date(weekStartDate);
       date.setDate(date.getDate() + i);
 
@@ -299,7 +292,7 @@ export default function WeekScheduler({
         date,
         dateStr:
           date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0'),
-        isInRange: date >= new Date(startDateTime) && date <= new Date(endDateTime), // mark if inside range
+        isInRange: date >= new Date(startDateTime) && date <= new Date(endDateTime),
       });
     }
 
@@ -411,7 +404,6 @@ export default function WeekScheduler({
     const end = new Date(endDateTime);
     const allDays: DayItem[] = [];
 
-    // Generate all days in range
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       const dateStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
       const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -422,10 +414,8 @@ export default function WeekScheduler({
       });
     }
 
-    // Create CSV header
     let csv = 'Time,' + allDays.map((d) => `${d.name} (${d.dateStr})`).join(',') + '\n';
 
-    // Create CSV rows
     timeSlots.forEach((minutes) => {
       const row = [formatTime(minutes)];
 
@@ -441,7 +431,6 @@ export default function WeekScheduler({
       csv += row.join(',') + '\n';
     });
 
-    // Create and download file
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');

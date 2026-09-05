@@ -5,10 +5,8 @@ import { getMemberColor, UNDERSTAFFED_COLOR } from '../lib/colors';
 const HOUR_HEIGHT_PX = 48;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// `result.generatedAt` is a real point in time (when the algorithm ran), so
-// it's shown in the viewer's own local timezone — unlike shift/swap
-// boundaries below, which are UTC-anchored wall clock and must render
-// identically for every viewer (see formatShiftDateTime).
+// `generatedAt` is a real instant, so it renders in the viewer's local
+// timezone — unlike shift/swap times, which are UTC-anchored wall clock.
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString([], {
     weekday: 'short',
@@ -19,11 +17,8 @@ function formatDateTime(iso: string): string {
   });
 }
 
-// Shift/swap timestamps (assignment and understaffed ranges, swap-proposal
-// selections) are UTC-anchored wall clock — see server/scheduler.ts's
-// parseWallClock. Formatting them in UTC (rather than the viewer's browser
-// timezone) means every member sees the same wall-clock hours the shift was
-// configured with, regardless of where they are.
+// Shift/swap timestamps are UTC-anchored wall clock (see server/scheduler.ts's
+// parseWallClock), so every member sees the configured hours wherever they are.
 function formatShiftDateTime(iso: string): string {
   return new Date(iso).toLocaleString([], {
     timeZone: 'UTC',
@@ -43,10 +38,8 @@ function formatTimeOfDay(minutes: number): string {
   return m === 0 ? `${displayHour} ${period}` : `${displayHour}:${m.toString().padStart(2, '0')} ${period}`;
 }
 
-// Assignment/understaffed timestamps are UTC-anchored wall clock (see
-// server/scheduler.ts's parseWallClock), so day boundaries and calendar keys
-// must be read/written in UTC too — local getters would shift which
-// calendar day a slot lands on by the viewer's own timezone offset.
+// Day boundaries and calendar keys read UTC too — local getters would shift
+// which calendar day a slot lands on by the viewer's timezone offset.
 function startOfDay(d: Date): Date {
   const copy = new Date(d);
   copy.setUTCHours(0, 0, 0, 0);
@@ -71,12 +64,8 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-// Absolute time for the start of the slot `minuteOfDay` minutes into
-// `dayDate` (a UTC midnight). Using setUTCMinutes (rather than raw
-// millisecond math) lets JS handle any hour/day rollover for us, the same
-// way WeekScheduler's own day-arithmetic does — just anchored to UTC
-// instead of the browser's local zone, to match the UTC-anchored wall clock
-// assignment timestamps are built from.
+// Start of the slot `minuteOfDay` minutes into `dayDate` (a UTC midnight);
+// setUTCMinutes handles hour/day rollover.
 function cellTime(dayDate: Date, minuteOfDay: number): string {
   const d = new Date(dayDate);
   d.setUTCMinutes(minuteOfDay);
@@ -101,10 +90,9 @@ interface LaidOutSegment extends DaySegment {
   colCount: number;
 }
 
-// Greedy column packing: events overlapping in time get placed side-by-side.
-// `requiredRanges` (from understaffed data) widens a cluster's column count
-// beyond its actual occupant count so a visible empty gap remains where the
-// understaffed hatch can show through, instead of blocks stretching to fill it.
+// Greedy column packing: overlapping events sit side-by-side. `requiredRanges`
+// widens a cluster past its occupant count so the understaffed hatch stays
+// visible instead of blocks stretching to fill the gap.
 function layoutDaySegments(
   segments: DaySegment[],
   requiredRanges: Array<{ startMin: number; endMin: number; required: number }> = []
@@ -146,8 +134,7 @@ function layoutDaySegments(
   return out;
 }
 
-// Splits a start/end range into per-day, minutes-of-day segments, clipped to
-// each day's [0, 1440) boundary (shifts can cross midnight).
+// Splits a range into per-day minutes-of-day segments (shifts cross midnight).
 function splitByDay(start: string, end: string): Map<string, { startMin: number; endMin: number }> {
   const result = new Map<string, { startMin: number; endMin: number }>();
   const startDate = new Date(start);
@@ -178,9 +165,8 @@ interface RangeSelection {
   end: string;
 }
 
-// Anchor cell for an in-progress drag, tracked in a ref so the per-cell
-// mouseenter handlers (attached fresh every render) always see the live
-// value without needing to resubscribe anything.
+// Kept in a ref so per-cell mouseenter handlers, reattached every render,
+// always see the live drag value.
 interface DragInfo {
   slot: SelectionSlot;
   memberName: string;
@@ -321,8 +307,6 @@ export default function ScheduleResults({ result, interactive, previewRequest }:
       .sort((a, b) => b.minutes - a.minutes);
   }, [result.assignments]);
 
-  // Average is total/count regardless of how the distribution is shaped, so
-  // "target" needs no separate weighting logic beyond the sum below.
   const targetMinutes = workload.length
     ? workload.reduce((sum, w) => sum + w.minutes, 0) / workload.length
     : 0;
@@ -344,11 +328,8 @@ export default function ScheduleResults({ result, interactive, previewRequest }:
   const pctTop = (min: number) => ((min - windowStartMin) / windowLength) * 100;
   const pctHeight = (a: number, b: number) => ((b - a) / windowLength) * 100;
 
-  // Finds which column slot (from the same greedy packing used for the real
-  // shift bars) a given member/day/time-range sits in, so overlays drawn on
-  // top of a bar match its footprint exactly even when other members' shifts
-  // are packed side-by-side in the same cluster — instead of always
-  // spanning the day column's full width.
+  // Which packed column a range sits in, so overlays match the underlying
+  // bar's footprint instead of spanning the day column's full width.
   const findColumn = (dayKey: string, memberName: string, startMin: number, endMin: number) => {
     const owner = (segmentsByDay.get(dayKey) ?? []).find(
       (s) => s.memberName === memberName && s.startMin <= startMin && s.endMin >= endMin
@@ -356,10 +337,9 @@ export default function ScheduleResults({ result, interactive, previewRequest }:
     return { col: owner?.col ?? 0, colCount: owner?.colCount ?? 1 };
   };
 
-  // Overlay boxes for the swap being proposed right now (drawn on top of the
-  // real shift bars, never mutating them). Recomputed from `selections` via
-  // the same day-splitting used for assignments, so overnight selections
-  // render correctly across the two day-columns they touch.
+  // Overlay boxes for the in-progress swap proposal, drawn on top of the real
+  // shift bars. Day-split like assignments so overnight selections span both
+  // day columns they touch.
   const overlaysByDay = useMemo(() => {
     const map = new Map<
       string,
@@ -380,9 +360,7 @@ export default function ScheduleResults({ result, interactive, previewRequest }:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selections, segmentsByDay]);
 
-  // Ghost outline for an incoming request being hovered in the requests
-  // list — purely visual, doesn't touch segmentsByDay/layout at all beyond
-  // reusing the same column lookup so it matches the real bar's footprint.
+  // Ghost outline for an incoming request hovered in the requests list.
   const previewByDay = useMemo(() => {
     const map = new Map<
       string,
@@ -407,10 +385,8 @@ export default function ScheduleResults({ result, interactive, previewRequest }:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [previewRequest, memberColor, segmentsByDay]);
 
-  // Drag-select over a discrete grid of real per-slot cells (mirrors
-  // WeekScheduler's availability grid) rather than inferring a time from raw
-  // pixel coordinates — every interactive unit is a real element the pointer
-  // is actually over, so there's nothing to drift out of sync.
+  // Drag-select runs over real per-slot cell elements rather than inferring a
+  // time from pixel coordinates, so nothing can drift out of sync.
   const beginCellDrag = (
     slot: SelectionSlot,
     memberName: string,
@@ -466,8 +442,8 @@ export default function ScheduleResults({ result, interactive, previewRequest }:
     };
   };
 
-  // Looks up the full (un-clipped) assignment bounds a given selection
-  // belongs to, for the click-expands-to-whole-shift behavior on release.
+  // Full (un-clipped) bounds of the assignment a selection belongs to, for the
+  // click-expands-to-whole-shift behavior on release.
   const findAssignmentFor = (memberName: string, atIso: string): { assignmentStart: string; assignmentEnd: string } | null => {
     const match = result.assignments.find(
       (a) => a.memberName === memberName && new Date(a.start) <= new Date(atIso) && new Date(a.end) >= new Date(atIso)
