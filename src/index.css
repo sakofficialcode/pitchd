@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 @layer components {
-  /* Page shell: every top-level page uses the same background + centered column. */
+  /* Page shell */
   .ui-page {
     @apply min-h-screen bg-gray-100;
   }
@@ -12,7 +12,7 @@
     @apply min-h-screen bg-gray-100 flex items-center justify-center;
   }
 
-  /* Card: the white bordered panel used throughout scheduler/admin pages. */
+  /* Card */
   .ui-card {
     @apply bg-white rounded-lg shadow-sm border border-gray-200 p-6;
   }

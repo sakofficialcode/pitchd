@@ -3,10 +3,8 @@ import assert from 'node:assert/strict';
 import { generateSchedule, isNightSlot } from './scheduler.ts';
 import type { GroupConfig, MemberAvailability } from './types.ts';
 
-// shiftStart/shiftEnd are naive wall-clock strings parsed as UTC by
-// scheduler.ts (see parseWallClock) — expected assignment timestamps must be
-// built the same way, rather than `new Date(naiveString).toISOString()`,
-// which resolves against the test runner's own local timezone.
+// Expected timestamps must be built the way scheduler.ts parses them (as UTC),
+// not via `new Date(naiveString)`, which uses the test runner's local timezone.
 function utc(wallClock: string): string {
   return new Date(`${wallClock}:00.000Z`).toISOString();
 }

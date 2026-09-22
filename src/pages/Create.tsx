@@ -15,7 +15,7 @@ const timeGranularity = [
   { label: '1 hour', value: 60 },
 ];
 
-// Helper to convert an hour value (0-24, or 24-48 for the next day) to a readable time string
+// `hour` runs 0-48; values past 24 are the next day.
 function formatHour(hour: number): string {
   const h = Math.floor(hour) % 24;
   const period = h >= 12 ? 'PM' : 'AM';

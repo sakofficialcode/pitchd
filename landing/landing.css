@@ -1,0 +1,21 @@
+@import "tailwindcss" source(".");
+
+@theme {
+  --font-geist: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-geist-mono: "Geist Mono", ui-monospace, monospace;
+  --font-hand: "Caveat", cursive;
+
+  --animate-rise: rise 700ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-twinkle: twinkle 4s ease-in-out infinite;
+  --animate-flicker: flicker 2.6s ease-in-out infinite;
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(10px); }
+  }
+  @keyframes twinkle {
+    50% { opacity: 0.2; }
+  }
+  @keyframes flicker {
+    50% { transform: scale(0.94, 1.06); }
+  }
+}

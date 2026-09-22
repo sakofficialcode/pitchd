@@ -4,15 +4,12 @@ import { generateSchedule, isNightSlot } from './scheduler.ts';
 import type { GroupConfig } from './types.ts';
 import { auburnTentingConfig, auburnTentingMembers } from './fixtures/auburn-tenting-availability.ts';
 
-// Regression test built from a real multi-day tenting/camp-out sign-up sheet (12 members,
-// half-hour granularity, names anonymized to M1-M12 — see fixtures/auburn-tenting-availability.ts).
-// Rather than hand-computing the exact expected schedule for 12 people over 2.5 days, this
-// checks the invariants generateSchedule must uphold against real, messy availability data.
+// Regression test over real, messy availability data (12 members, 2.5 days).
+// Hand-computing the exact expected schedule isn't practical at that size, so
+// this asserts the invariants generateSchedule must uphold instead.
 
-// Assignment timestamps are UTC-anchored wall clock (see scheduler.ts's
-// parseWallClock), so re-deriving the availability-map key they came from
-// must read UTC fields too — local getters would shift by the test
-// runner's own timezone offset.
+// Assignment timestamps are UTC-anchored, so re-deriving their availability-map
+// key must read UTC fields — local getters would shift by the runner's offset.
 function slotKey(d: Date): string {
   const dateStr =
     d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');

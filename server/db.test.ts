@@ -151,10 +151,8 @@ test('race #1: two concurrent first-time saves for the same member never throw, 
 
   const results = [a, b];
   const createdCount = results.filter((r) => r.status === 'ok' && r.created).length;
-  // Whichever call loses the race sees the winner's row already exists;
-  // since the two calls use different passwords, the loser's password won't
-  // match and it correctly reports invalid_password instead of throwing an
-  // unhandled UNIQUE-constraint-violation error.
+  // The loser finds the winner's row; the passwords differ, so it reports
+  // invalid_password rather than throwing a UNIQUE-constraint violation.
   const invalidCount = results.filter((r) => r.status === 'invalid_password').length;
 
   assert.equal(createdCount, 1);

@@ -11,6 +11,8 @@
     "start": "tsx --env-file=.env server/index.ts",
     "lint": "eslint .",
     "preview": "vite preview",
+    "dev:landing": "vite --config vite.landing.config.ts",
+    "build:landing": "tsc -b && vite build --config vite.landing.config.ts",
     "db:migrate": "tsx --env-file=.env server/migrate.ts",
     "test:scheduler": "tsx --test server/scheduler.test.ts server/scheduler.fixture.test.ts",
     "test:db": "tsx --test --env-file=.env server/db.test.ts"

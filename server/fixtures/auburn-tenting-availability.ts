@@ -1,9 +1,6 @@
-// Anonymized real-world availability data derived from a multi-day tenting/camp-out
-// sign-up sheet (12 members, half-hour granularity, Mon 07:00 - Wed 19:00, with two
-// overnight blocks). Names are replaced with M1-M12; the shape and distribution of
-// available/not_preferred/unavailable slots is unchanged, including the overnight
-// blocks (Tue 00:00-07:00, Wed 00:00-07:00) which were originally recorded as a
-// single constant status for the whole span rather than per half-hour.
+// Anonymized real sign-up sheet (12 members, half-hour granularity,
+// Mon 07:00 - Wed 19:00). Names are M1-M12; slot statuses are unchanged,
+// including the overnight blocks recorded as one status for the whole span.
 import type { MemberAvailability } from '../types.ts';
 
 export const auburnTentingMembers: MemberAvailability[] = [
